@@ -9,6 +9,7 @@ static mutex  g_globalMutex;
 
 /** Metadata */
 static const GUID IID_StagingShadowResource = {0xe2728d91,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
+static const GUID IID_CopiedVertexBuffer = {0xe2728d92,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 
 struct ATFIX_RESOURCE_INFO {
   D3D11_RESOURCE_DIMENSION Dim;
@@ -786,8 +787,6 @@ public:
   void VSSetShader(ID3D11VertexShader* pVertexShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override { ctx->VSSetShader(pVertexShader, ppClassInstances, NumClassInstances); }
   void DrawIndexed(UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) override { ctx->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation); }
   void Draw(UINT VertexCount, UINT StartVertexLocation) override { ctx->Draw(VertexCount, StartVertexLocation); }
-  HRESULT Map(ID3D11Resource* pResource, UINT Subresource, D3D11_MAP MapType, UINT MapFlags, D3D11_MAPPED_SUBRESOURCE* pMappedResource) override { return ctx->Map(pResource, Subresource, MapType, MapFlags, pMappedResource); }
-  void Unmap(ID3D11Resource* pResource, UINT Subresource) override { ctx->Unmap(pResource, Subresource); }
   void PSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) override { ctx->PSSetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers); }
   void IASetInputLayout(ID3D11InputLayout* pInputLayout) override { ctx->IASetInputLayout(pInputLayout); }
   void IASetVertexBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppVertexBuffers, const UINT* pStrides, const UINT* pOffsets) override { ctx->IASetVertexBuffers(StartSlot, NumBuffers, ppVertexBuffers, pStrides, pOffsets); }
@@ -878,6 +877,29 @@ public:
   UINT GetContextFlags() override { return ctx->GetContextFlags(); }
   HRESULT FinishCommandList(BOOL RestoreDeferredContextState, ID3D11CommandList** ppCommandList) override { return ctx->FinishCommandList(RestoreDeferredContextState, ppCommandList); }
 
+  HRESULT Map(ID3D11Resource* pResource, UINT Subresource, D3D11_MAP MapType, UINT MapFlags, D3D11_MAPPED_SUBRESOURCE* pMappedResource) override {
+    ID3D11Buffer* vertexBuffer = nullptr;
+    UINT size = sizeof(vertexBuffer);
+    if (SUCCEEDED(pResource->GetPrivateData(IID_CopiedVertexBuffer, &size, &vertexBuffer))) {
+      HRESULT res = ctx->Map(vertexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, pMappedResource);
+      vertexBuffer->Release();
+      return res;
+    }
+    return ctx->Map(pResource, Subresource, MapType, MapFlags, pMappedResource);
+  }
+
+  void Unmap(ID3D11Resource* pResource, UINT Subresource) override {
+    ID3D11Buffer* vertexBuffer = nullptr;
+    UINT size = sizeof(vertexBuffer);
+    if (SUCCEEDED(pResource->GetPrivateData(IID_CopiedVertexBuffer, &size, &vertexBuffer))) {
+      ctx->Unmap(vertexBuffer, 0);
+      vertexBuffer->Release();
+      return;
+    }
+    ctx->Unmap(pResource, Subresource);
+  }
+
+
   void ClearRenderTargetView(
           ID3D11RenderTargetView*   pRTV,
     const FLOAT                     pColor[4]) override {
@@ -905,6 +927,40 @@ public:
   void CopyResource(
           ID3D11Resource*           pDstResource,
           ID3D11Resource*           pSrcResource) override {
+    if (isImmediatecontext(ctx)) {
+      ID3D11Buffer* srcBuffer = nullptr;
+      ID3D11Buffer* dstBuffer = nullptr;
+      UINT size = sizeof(srcBuffer);
+      bool skip_rest = false;
+      if (SUCCEEDED(pSrcResource->GetPrivateData(IID_CopiedVertexBuffer, &size, &srcBuffer))) {
+          // Don't copy back to vertex buffer
+          srcBuffer->Release();
+          return;
+      }
+      if (SUCCEEDED(pDstResource->QueryInterface(IID_PPV_ARGS(&dstBuffer)))) {
+        if (SUCCEEDED(pSrcResource->QueryInterface(IID_PPV_ARGS(&srcBuffer)))) {
+          D3D11_BUFFER_DESC srcDesc, dstDesc;
+          srcBuffer->GetDesc(&srcDesc);
+          dstBuffer->GetDesc(&dstDesc);
+          if (srcDesc.Usage == D3D11_USAGE_DYNAMIC && srcDesc.BindFlags == D3D11_BIND_VERTEX_BUFFER && dstDesc.Usage == D3D11_USAGE_STAGING)
+          {
+            // Game really likes copying to and from vertex buffers
+            // AMD Windows driver syncs with the driver thread for every D3D11_MAP_READWRITE map
+            // Skip it entirely by redirecting the map to the vertex buffer with D3D11_MAP_WRITE_DISCARD
+            // Then drop any copies from the staging buffer, since it wasn't updated
+            // Helps the Ryza synthesis UI (which really spams this) keep a smooth 144fps
+            // Also removes frame drops when jumping in Ryza 2 on steam deck
+            skip_rest = true;
+            dstBuffer->SetPrivateDataInterface(IID_CopiedVertexBuffer, srcBuffer);
+          }
+          srcBuffer->Release();
+        }
+        dstBuffer->Release();
+      }
+      if (skip_rest)
+          return;
+    }
+
     ID3D11Resource* dstShadow = getShadowResource(pDstResource);
 
     bool needsBaseCopy = true;
@@ -942,6 +998,16 @@ public:
           ID3D11Resource*           pSrcResource,
           UINT                      SrcSubresource,
     const D3D11_BOX*                pSrcBox) override {
+
+    if (isImmediatecontext(ctx)) {
+      ID3D11Buffer* srcBuffer = nullptr;
+      UINT size = sizeof(srcBuffer);
+      if (SUCCEEDED(pSrcResource->GetPrivateData(IID_CopiedVertexBuffer, &size, &srcBuffer))) {
+        // Don't copy back to vertex buffer
+        srcBuffer->Release();
+        return;
+      }
+    }
 
     ID3D11Resource* dstShadow = getShadowResource(pDstResource);
 
