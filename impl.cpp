@@ -5,41 +5,7 @@
 #include "util.h"
 
 namespace atfix {
-
-/** Hooking-related stuff */
-using PFN_ID3D11Device_CreateBuffer = HRESULT (STDMETHODCALLTYPE *) (ID3D11Device*,
-  const D3D11_BUFFER_DESC*, const D3D11_SUBRESOURCE_DATA*, ID3D11Buffer**);
-using PFN_ID3D11Device_CreateDeferredContext = HRESULT (STDMETHODCALLTYPE *) (ID3D11Device*,
-  UINT, ID3D11DeviceContext**);
-using PFN_ID3D11Device_GetImmediateContext = void(STDMETHODCALLTYPE*) (ID3D11Device*, ID3D11DeviceContext**);
-using PFN_ID3D11Device_CreateTexture1D = HRESULT (STDMETHODCALLTYPE *) (ID3D11Device*,
-  const D3D11_TEXTURE1D_DESC*, const D3D11_SUBRESOURCE_DATA*, ID3D11Texture1D**);
-using PFN_ID3D11Device_CreateTexture2D = HRESULT (STDMETHODCALLTYPE *) (ID3D11Device*,
-  const D3D11_TEXTURE2D_DESC*, const D3D11_SUBRESOURCE_DATA*, ID3D11Texture2D**);
-using PFN_ID3D11Device_CreateTexture3D = HRESULT (STDMETHODCALLTYPE *) (ID3D11Device*,
-  const D3D11_TEXTURE3D_DESC*, const D3D11_SUBRESOURCE_DATA*, ID3D11Texture3D**);
-
-struct DeviceProcs {
-  PFN_ID3D11Device_CreateBuffer                         CreateBuffer                  = nullptr;
-  PFN_ID3D11Device_CreateDeferredContext                CreateDeferredContext         = nullptr;
-  PFN_ID3D11Device_GetImmediateContext                  GetImmediateContext           = nullptr;
-  PFN_ID3D11Device_CreateTexture1D                      CreateTexture1D               = nullptr;
-  PFN_ID3D11Device_CreateTexture2D                      CreateTexture2D               = nullptr;
-  PFN_ID3D11Device_CreateTexture3D                      CreateTexture3D               = nullptr;
-};
-
-static mutex  g_hookMutex;
 static mutex  g_globalMutex;
-
-DeviceProcs   g_deviceProcs;
-
-constexpr uint32_t HOOK_DEVICE  = (1u << 0);
-
-uint32_t      g_installedHooks = 0u;
-
-const DeviceProcs* getDeviceProcs(ID3D11Device* pDevice) {
-  return &g_deviceProcs;
-}
 
 /** Metadata */
 static const GUID IID_StagingShadowResource = {0xe2728d91,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
@@ -482,94 +448,6 @@ void updateUavShadowResources(
   }
 }
 
-HRESULT STDMETHODCALLTYPE ID3D11Device_CreateBuffer(
-        ID3D11Device*             pDevice,
-  const D3D11_BUFFER_DESC*        pDesc,
-  const D3D11_SUBRESOURCE_DATA*   pData,
-        ID3D11Buffer**            ppBuffer) {
-  auto procs = getDeviceProcs(pDevice);
-  D3D11_BUFFER_DESC desc;
-
-  if (pDesc && pDesc->Usage == D3D11_USAGE_STAGING) {
-    desc = *pDesc;
-    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-    pDesc = &desc;
-  }
-
-  return procs->CreateBuffer(pDevice, pDesc, pData, ppBuffer);
-}
-
-void STDMETHODCALLTYPE ID3D11Device_GetImmediateContext(
-        ID3D11Device*             pDevice,
-        ID3D11DeviceContext**     ppImmediateContext) {
-  auto procs = getDeviceProcs(pDevice);
-  procs->GetImmediateContext(pDevice, ppImmediateContext);
-  *ppImmediateContext = hookContext(*ppImmediateContext);
-}
-
-HRESULT STDMETHODCALLTYPE ID3D11Device_CreateDeferredContext(
-        ID3D11Device*             pDevice,
-        UINT                      Flags,
-        ID3D11DeviceContext**     ppDeferredContext) {
-  auto procs = getDeviceProcs(pDevice);
-  HRESULT hr = procs->CreateDeferredContext(pDevice, Flags, ppDeferredContext);
-
-  if (SUCCEEDED(hr) && ppDeferredContext)
-    *ppDeferredContext = hookContext(*ppDeferredContext);
-  return hr;
-}
-
-HRESULT STDMETHODCALLTYPE ID3D11Device_CreateTexture1D(
-        ID3D11Device*             pDevice,
-  const D3D11_TEXTURE1D_DESC*     pDesc,
-  const D3D11_SUBRESOURCE_DATA*   pData,
-        ID3D11Texture1D**         ppTexture) {
-  auto procs = getDeviceProcs(pDevice);
-  D3D11_TEXTURE1D_DESC desc;
-
-  if (pDesc && pDesc->Usage == D3D11_USAGE_STAGING) {
-    desc = *pDesc;
-    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-    pDesc = &desc;
-  }
-
-  return procs->CreateTexture1D(pDevice, pDesc, pData, ppTexture);
-}
-
-HRESULT STDMETHODCALLTYPE ID3D11Device_CreateTexture2D(
-        ID3D11Device*             pDevice,
-  const D3D11_TEXTURE2D_DESC*     pDesc,
-  const D3D11_SUBRESOURCE_DATA*   pData,
-        ID3D11Texture2D**         ppTexture) {
-  auto procs = getDeviceProcs(pDevice);
-  D3D11_TEXTURE2D_DESC desc;
-
-  if (pDesc && pDesc->Usage == D3D11_USAGE_STAGING) {
-    desc = *pDesc;
-    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-    pDesc = &desc;
-  }
-
-  return procs->CreateTexture2D(pDevice, pDesc, pData, ppTexture);
-}
-
-HRESULT STDMETHODCALLTYPE ID3D11Device_CreateTexture3D(
-        ID3D11Device*             pDevice,
-  const D3D11_TEXTURE3D_DESC*     pDesc,
-  const D3D11_SUBRESOURCE_DATA*   pData,
-        ID3D11Texture3D**         ppTexture) {
-  auto procs = getDeviceProcs(pDevice);
-  D3D11_TEXTURE3D_DESC desc;
-
-  if (pDesc && pDesc->Usage == D3D11_USAGE_STAGING) {
-    desc = *pDesc;
-    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-    pDesc = &desc;
-  }
-
-  return procs->CreateTexture3D(pDevice, pDesc, pData, ppTexture);
-}
-
 HRESULT tryCpuCopy(
         ID3D11DeviceContext*      pContext,
         ID3D11Resource*           pDstResource,
@@ -692,51 +570,177 @@ HRESULT tryCpuCopy(
   return S_OK;
 }
 
-#define HOOK_PROC(iface, object, table, index, proc) \
-  hookProc(object, #iface "::" #proc, &table->proc, &iface ## _ ## proc, index)
+class DeviceWrapper final : public ID3D11Device, IDXGIDevice1 {
+  LONG refcnt;
+  ID3D11Device* dev;
+  IDXGIDevice1* dxgi;
 
-template<typename T>
-void hookProc(void* pObject, const char* pName, T** ppOrig, T* pHook, uint32_t index) {
-  void** vtbl = *reinterpret_cast<void***>(pObject);
-
-  MH_STATUS mh = MH_CreateHook(vtbl[index],
-    reinterpret_cast<void*>(pHook),
-    reinterpret_cast<void**>(ppOrig));
-
-  if (mh) {
-    if (mh != MH_ERROR_ALREADY_CREATED)
-      log("Failed to create hook for ", pName, ": ", MH_StatusToString(mh));
-    return;
+public:
+  DeviceWrapper(ID3D11Device* dev_) : refcnt(1), dev(dev_), dxgi(nullptr) {
+    dev->QueryInterface(IID_PPV_ARGS(&dxgi));
   }
 
-  mh = MH_EnableHook(vtbl[index]);
-
-  if (mh) {
-    log("Failed to enable hook for ", pName, ": ", MH_StatusToString(mh));
-    return;
+  // IUnknown
+  HRESULT QueryInterface(REFIID riid, void** ppvObject) override {
+    if (IsEqualIID(riid, __uuidof(ID3D11Device))) {
+      AddRef();
+      *ppvObject = static_cast<ID3D11Device*>(this);
+      return S_OK;
+    }
+    if (dxgi && (
+        IsEqualGUID(riid, __uuidof(IDXGIDevice1)) ||
+        IsEqualGUID(riid, __uuidof(IDXGIDevice)) ||
+        IsEqualGUID(riid, __uuidof(IDXGIObject)))) {
+      AddRef();
+      *ppvObject = static_cast<IDXGIDevice1*>(this);
+      return S_OK;
+    }
+    HRESULT res = dev->QueryInterface(riid, ppvObject);
+    LPOLESTR iidstr;
+    if (StringFromIID(riid, &iidstr) == S_OK) {
+      char buf[64] = {};
+      WideCharToMultiByte(CP_UTF8, 0, iidstr, -1, buf, sizeof(buf), nullptr, nullptr);
+      log("ID3D11Device QueryInterface ", buf, " => ", std::hex, res);
+      CoTaskMemFree(iidstr);
+    }
+    else {
+      log("ID3D11Device QueryInterface <failed to get iid str>");
+    }
+    return res;
   }
 
-  log("Created hook for ", pName, " @ ", reinterpret_cast<void*>(pHook));
-}
+  ULONG AddRef() override { return InterlockedAdd(&refcnt, 1); }
+  ULONG Release() override {
+    ULONG res = InterlockedAdd(&refcnt, -1);
+    if (res == 0) {
+      dev->Release();
+      if (dxgi)
+          dxgi->Release();
+      delete this;
+    }
+    return res;
+  }
 
-void hookDevice(ID3D11Device* pDevice) {
-  std::lock_guard lock(g_hookMutex);
+  HRESULT STDMETHODCALLTYPE GetParent(REFIID riid, void** ppParent) override { return dxgi->GetParent(riid, ppParent); }
+  HRESULT STDMETHODCALLTYPE GetAdapter(IDXGIAdapter** pAdapter) override { return dxgi->GetAdapter(pAdapter); }
+  HRESULT STDMETHODCALLTYPE CreateSurface(const DXGI_SURFACE_DESC* pDesc, UINT NumSurfaces, DXGI_USAGE Usage, const DXGI_SHARED_RESOURCE* pSharedResource, IDXGISurface** ppSurface) override { return dxgi->CreateSurface(pDesc, NumSurfaces, Usage, pSharedResource, ppSurface); }
+  HRESULT STDMETHODCALLTYPE QueryResourceResidency(IUnknown* const* ppResources, DXGI_RESIDENCY* pResidencyStatus, UINT NumResources) override { return dxgi->QueryResourceResidency(ppResources, pResidencyStatus, NumResources); }
+  HRESULT STDMETHODCALLTYPE SetGPUThreadPriority(INT Priority) override { return dxgi->SetGPUThreadPriority(Priority); }
+  HRESULT STDMETHODCALLTYPE GetGPUThreadPriority(INT* pPriority) override { return dxgi->GetGPUThreadPriority(pPriority); }
+  HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(UINT MaxLatency) override { return dxgi->SetMaximumFrameLatency(MaxLatency); }
+  HRESULT STDMETHODCALLTYPE GetMaximumFrameLatency(UINT* pMaxLatency) override { return dxgi->GetMaximumFrameLatency(pMaxLatency); }
 
-  if (g_installedHooks & HOOK_DEVICE)
-    return;
+  HRESULT STDMETHODCALLTYPE CreateShaderResourceView(ID3D11Resource* pResource, const D3D11_SHADER_RESOURCE_VIEW_DESC* pDesc, ID3D11ShaderResourceView** ppSRView) override { return dev->CreateShaderResourceView(pResource, pDesc, ppSRView); }
+  HRESULT STDMETHODCALLTYPE CreateUnorderedAccessView(ID3D11Resource* pResource, const D3D11_UNORDERED_ACCESS_VIEW_DESC* pDesc, ID3D11UnorderedAccessView** ppUAView) override { return dev->CreateUnorderedAccessView(pResource, pDesc, ppUAView); }
+  HRESULT STDMETHODCALLTYPE CreateRenderTargetView(ID3D11Resource* pResource, const D3D11_RENDER_TARGET_VIEW_DESC* pDesc, ID3D11RenderTargetView** ppRTView) override { return dev->CreateRenderTargetView(pResource, pDesc, ppRTView); }
+  HRESULT STDMETHODCALLTYPE CreateDepthStencilView(ID3D11Resource* pResource, const D3D11_DEPTH_STENCIL_VIEW_DESC* pDesc, ID3D11DepthStencilView** ppDepthStencilView) override { return dev->CreateDepthStencilView(pResource, pDesc, ppDepthStencilView); }
+  HRESULT STDMETHODCALLTYPE CreateInputLayout(const D3D11_INPUT_ELEMENT_DESC* pInputElementDescs, UINT NumElements, const void* pShaderBytecodeWithInputSignature, SIZE_T BytecodeLength, ID3D11InputLayout** ppInputLayout) override { return dev->CreateInputLayout(pInputElementDescs, NumElements, pShaderBytecodeWithInputSignature, BytecodeLength, ppInputLayout); }
+  HRESULT STDMETHODCALLTYPE CreateVertexShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11VertexShader** ppVertexShader) override { return dev->CreateVertexShader(pShaderBytecode, BytecodeLength, pClassLinkage, ppVertexShader); }
+  HRESULT STDMETHODCALLTYPE CreateGeometryShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11GeometryShader** ppGeometryShader) override { return dev->CreateGeometryShader(pShaderBytecode, BytecodeLength, pClassLinkage, ppGeometryShader); }
+  HRESULT STDMETHODCALLTYPE CreateGeometryShaderWithStreamOutput(const void* pShaderBytecode, SIZE_T BytecodeLength, const D3D11_SO_DECLARATION_ENTRY* pSODeclaration, UINT NumEntries, const UINT* pBufferStrides, UINT NumStrides, UINT RasterizedStream, ID3D11ClassLinkage* pClassLinkage, ID3D11GeometryShader** ppGeometryShader) override { return dev->CreateGeometryShaderWithStreamOutput(pShaderBytecode, BytecodeLength, pSODeclaration, NumEntries, pBufferStrides, NumStrides, RasterizedStream, pClassLinkage, ppGeometryShader); }
+  HRESULT STDMETHODCALLTYPE CreatePixelShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11PixelShader** ppPixelShader) override { return dev->CreatePixelShader(pShaderBytecode, BytecodeLength, pClassLinkage, ppPixelShader); }
+  HRESULT STDMETHODCALLTYPE CreateHullShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11HullShader** ppHullShader) override { return dev->CreateHullShader(pShaderBytecode, BytecodeLength, pClassLinkage, ppHullShader); }
+  HRESULT STDMETHODCALLTYPE CreateDomainShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11DomainShader** ppDomainShader) override { return dev->CreateDomainShader(pShaderBytecode, BytecodeLength, pClassLinkage, ppDomainShader); }
+  HRESULT STDMETHODCALLTYPE CreateComputeShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11ComputeShader** ppComputeShader) override { return dev->CreateComputeShader(pShaderBytecode, BytecodeLength, pClassLinkage, ppComputeShader); }
+  HRESULT STDMETHODCALLTYPE CreateClassLinkage(ID3D11ClassLinkage** ppLinkage) override { return dev->CreateClassLinkage(ppLinkage); }
+  HRESULT STDMETHODCALLTYPE CreateBlendState(const D3D11_BLEND_DESC* pBlendStateDesc, ID3D11BlendState** ppBlendState) override { return dev->CreateBlendState(pBlendStateDesc, ppBlendState); }
+  HRESULT STDMETHODCALLTYPE CreateDepthStencilState(const D3D11_DEPTH_STENCIL_DESC* pDepthStencilDesc, ID3D11DepthStencilState** ppDepthStencilState) override { return dev->CreateDepthStencilState(pDepthStencilDesc, ppDepthStencilState); }
+  HRESULT STDMETHODCALLTYPE CreateRasterizerState(const D3D11_RASTERIZER_DESC* pRasterizerDesc, ID3D11RasterizerState** ppRasterizerState) override { return dev->CreateRasterizerState(pRasterizerDesc, ppRasterizerState); }
+  HRESULT STDMETHODCALLTYPE CreateSamplerState(const D3D11_SAMPLER_DESC* pSamplerDesc, ID3D11SamplerState** ppSamplerState) override { return dev->CreateSamplerState(pSamplerDesc, ppSamplerState); }
+  HRESULT STDMETHODCALLTYPE CreateQuery(const D3D11_QUERY_DESC* pQueryDesc, ID3D11Query** ppQuery) override { return dev->CreateQuery(pQueryDesc, ppQuery); }
+  HRESULT STDMETHODCALLTYPE CreatePredicate(const D3D11_QUERY_DESC* pPredicateDesc, ID3D11Predicate** ppPredicate) override { return dev->CreatePredicate(pPredicateDesc, ppPredicate); }
+  HRESULT STDMETHODCALLTYPE CreateCounter(const D3D11_COUNTER_DESC* pCounterDesc, ID3D11Counter** ppCounter) override { return dev->CreateCounter(pCounterDesc, ppCounter); }
+  HRESULT STDMETHODCALLTYPE OpenSharedResource(HANDLE hResource, REFIID ReturnedInterface, void** ppResource) override { return dev->OpenSharedResource(hResource, ReturnedInterface, ppResource); }
+  HRESULT STDMETHODCALLTYPE CheckFormatSupport(DXGI_FORMAT Format, UINT* pFormatSupport) override { return dev->CheckFormatSupport(Format, pFormatSupport); }
+  HRESULT STDMETHODCALLTYPE CheckMultisampleQualityLevels(DXGI_FORMAT Format, UINT SampleCount, UINT* pNumQualityLevels) override { return dev->CheckMultisampleQualityLevels(Format, SampleCount, pNumQualityLevels); }
+  void STDMETHODCALLTYPE CheckCounterInfo(D3D11_COUNTER_INFO* pCounterInfo) override { dev->CheckCounterInfo(pCounterInfo); }
+  HRESULT STDMETHODCALLTYPE CheckCounter(const D3D11_COUNTER_DESC* pDesc, D3D11_COUNTER_TYPE* pType, UINT* pActiveCounters, LPSTR szName, UINT* pNameLength, LPSTR szUnits, UINT* pUnitsLength, LPSTR szDescription, UINT* pDescriptionLength) override { return dev->CheckCounter(pDesc, pType, pActiveCounters, szName, pNameLength, szUnits, pUnitsLength, szDescription, pDescriptionLength); }
+  HRESULT STDMETHODCALLTYPE CheckFeatureSupport(D3D11_FEATURE Feature, void* pFeatureSupportData, UINT FeatureSupportDataSize) override { return dev->CheckFeatureSupport(Feature, pFeatureSupportData, FeatureSupportDataSize); }
+  HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID guid, UINT* pDataSize, void* pData) override { return dev->GetPrivateData(guid, pDataSize, pData); }
+  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID guid, UINT DataSize, const void* pData) override { return dev->SetPrivateData(guid, DataSize, pData); }
+  HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID guid, const IUnknown* pData) override { return dev->SetPrivateDataInterface(guid, pData); }
+  D3D_FEATURE_LEVEL STDMETHODCALLTYPE GetFeatureLevel(void) override { return dev->GetFeatureLevel(); }
+  UINT STDMETHODCALLTYPE GetCreationFlags(void) override { return dev->GetCreationFlags(); }
+  HRESULT STDMETHODCALLTYPE GetDeviceRemovedReason(void) override { return dev->GetDeviceRemovedReason(); }
+  HRESULT STDMETHODCALLTYPE SetExceptionMode(UINT RaiseFlags) override { return dev->SetExceptionMode(RaiseFlags); }
+  UINT STDMETHODCALLTYPE GetExceptionMode(void) override { return dev->GetExceptionMode(); }
 
-  log("Hooking device ", pDevice);
+  HRESULT STDMETHODCALLTYPE CreateBuffer(
+    const D3D11_BUFFER_DESC*        pDesc,
+    const D3D11_SUBRESOURCE_DATA*   pData,
+          ID3D11Buffer**            ppBuffer) override {
+    D3D11_BUFFER_DESC desc;
 
-  DeviceProcs* procs = &g_deviceProcs;
-  HOOK_PROC(ID3D11Device, pDevice, procs, 3,  CreateBuffer);
-  HOOK_PROC(ID3D11Device, pDevice, procs, 27, CreateDeferredContext);
-  HOOK_PROC(ID3D11Device, pDevice, procs, 40, GetImmediateContext);
-  HOOK_PROC(ID3D11Device, pDevice, procs, 4,  CreateTexture1D);
-  HOOK_PROC(ID3D11Device, pDevice, procs, 5,  CreateTexture2D);
-  HOOK_PROC(ID3D11Device, pDevice, procs, 6,  CreateTexture3D);
+    if (pDesc && pDesc->Usage == D3D11_USAGE_STAGING) {
+      desc = *pDesc;
+      desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+      pDesc = &desc;
+    }
 
-  g_installedHooks |= HOOK_DEVICE;
-}
+    return dev->CreateBuffer(pDesc, pData, ppBuffer);
+  }
+
+  void STDMETHODCALLTYPE GetImmediateContext(
+          ID3D11DeviceContext**     ppImmediateContext) override {
+    dev->GetImmediateContext(ppImmediateContext);
+    *ppImmediateContext = hookContext(*ppImmediateContext);
+  }
+
+  HRESULT STDMETHODCALLTYPE CreateDeferredContext(
+          UINT                      Flags,
+          ID3D11DeviceContext**     ppDeferredContext) override {
+    HRESULT hr = dev->CreateDeferredContext(Flags, ppDeferredContext);
+
+    if (SUCCEEDED(hr) && ppDeferredContext)
+      *ppDeferredContext = hookContext(*ppDeferredContext);
+    return hr;
+  }
+
+  HRESULT STDMETHODCALLTYPE CreateTexture1D(
+    const D3D11_TEXTURE1D_DESC*     pDesc,
+    const D3D11_SUBRESOURCE_DATA*   pData,
+          ID3D11Texture1D**         ppTexture) override {
+    D3D11_TEXTURE1D_DESC desc;
+
+    if (pDesc && pDesc->Usage == D3D11_USAGE_STAGING) {
+      desc = *pDesc;
+      desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+      pDesc = &desc;
+    }
+
+    return dev->CreateTexture1D(pDesc, pData, ppTexture);
+  }
+
+  HRESULT STDMETHODCALLTYPE CreateTexture2D(
+    const D3D11_TEXTURE2D_DESC*     pDesc,
+    const D3D11_SUBRESOURCE_DATA*   pData,
+          ID3D11Texture2D**         ppTexture) override {
+    D3D11_TEXTURE2D_DESC desc;
+
+    if (pDesc && pDesc->Usage == D3D11_USAGE_STAGING) {
+      desc = *pDesc;
+      desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+      pDesc = &desc;
+    }
+
+    return dev->CreateTexture2D(pDesc, pData, ppTexture);
+  }
+
+  HRESULT STDMETHODCALLTYPE CreateTexture3D(
+    const D3D11_TEXTURE3D_DESC*     pDesc,
+    const D3D11_SUBRESOURCE_DATA*   pData,
+          ID3D11Texture3D**         ppTexture) override {
+    D3D11_TEXTURE3D_DESC desc;
+
+    if (pDesc && pDesc->Usage == D3D11_USAGE_STAGING) {
+      desc = *pDesc;
+      desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+      pDesc = &desc;
+    }
+
+    return dev->CreateTexture3D(pDesc, pData, ppTexture);
+  }
+};
 
 class ContextWrapper final : public ID3D11DeviceContext {
   LONG refcnt;
@@ -1032,6 +1036,11 @@ public:
     }
   }
 };
+
+ID3D11Device* hookDevice(ID3D11Device* pDevice) {
+  log("Hooking device ", pDevice);
+  return new DeviceWrapper(pDevice);
+}
 
 ID3D11DeviceContext* hookContext(ID3D11DeviceContext* pContext) {
   return new ContextWrapper(pContext);

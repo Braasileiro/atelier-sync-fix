@@ -10,8 +10,6 @@
 #include <functional>
 #include <mutex>
 
-#include "./minhook/include/MinHook.h"
-
 namespace atfix {
 
 /**

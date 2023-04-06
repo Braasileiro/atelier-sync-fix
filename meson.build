@@ -36,14 +36,7 @@ d3d11_src = files([
   'main.cpp',
 ])
 
-minhook_src = files([
-  'minhook/src/hde/hde64.c',
-  'minhook/src/hook.c',
-  'minhook/src/buffer.c',
-  'minhook/src/trampoline.c',
-])
-
-d3d11_dll = shared_library('d3d11', d3d11_src, minhook_src,
+d3d11_dll = shared_library('d3d11', d3d11_src,
   name_prefix         : '',
   install             : true,
   vs_module_defs      : 'd3d11.def',

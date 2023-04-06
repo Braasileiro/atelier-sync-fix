@@ -111,7 +111,7 @@ DLLEXPORT HRESULT __stdcall D3D11CreateDevice(
   if (FAILED(hr))
     return hr;
 
-  atfix::hookDevice(device);
+  device = atfix::hookDevice(device);
   context = atfix::hookContext(context);
 
   if (ppDevice) {
@@ -166,7 +166,7 @@ DLLEXPORT HRESULT __stdcall D3D11CreateDeviceAndSwapChain(
   if (FAILED(hr))
     return hr;
 
-  atfix::hookDevice(device);
+  device = atfix::hookDevice(device);
   context = atfix::hookContext(context);
 
   if (ppDevice) {
@@ -185,16 +185,6 @@ DLLEXPORT HRESULT __stdcall D3D11CreateDeviceAndSwapChain(
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
-  switch (fdwReason) {
-    case DLL_PROCESS_ATTACH:
-      MH_Initialize();
-      break;
-
-    case DLL_PROCESS_DETACH:
-      MH_Uninitialize();
-      break;
-  }
-
   return TRUE;
 }
 
