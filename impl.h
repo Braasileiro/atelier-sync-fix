@@ -11,5 +11,8 @@ ID3D11DeviceContext* hookContext(ID3D11DeviceContext* pContext);
 
 /* lives in main.cpp */
 extern Log log;
-
+extern struct Config {
+	DWORD msaaSamples;
+	BOOL ssaaTransparentObjects;
+} config;
 }

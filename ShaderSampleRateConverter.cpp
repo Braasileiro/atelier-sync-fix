@@ -48,6 +48,8 @@ bool shouldUseSampleRate(const void* data, SIZE_T length) {
   for (const ShaderHash& hash : sampleRateShaders)
     if (hash == header->hash)
       return true;
+  if (config.ssaaTransparentObjects && header->hash == ShaderHash({ 0x0cd1b9e5, 0x22e7069e, 0x476455ff, 0x98bfd850 }))
+      return true;
   return false;
 }
 

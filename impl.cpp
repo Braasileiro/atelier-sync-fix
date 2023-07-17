@@ -226,7 +226,7 @@ ID3D11RenderTargetView* getOrCreateMSAARTV(ID3D11Device* dev, ID3D11RenderTarget
     D3D11_TEXTURE2D_DESC desc;
     hostTex->GetDesc(&desc);
     desc.Format = vdesc.Format;
-    desc.SampleDesc.Count = 8;
+    desc.SampleDesc.Count = config.msaaSamples;
     desc.SampleDesc.Quality = 0;
     while (desc.SampleDesc.Count > 1) {
       UINT quality = 0;
@@ -263,7 +263,7 @@ ID3D11DepthStencilView* getOrCreateMSAADSV(ID3D11Device* dev, ID3D11DepthStencil
     D3D11_TEXTURE2D_DESC desc;
     hostTex->GetDesc(&desc);
     desc.Format = vdesc.Format;
-    desc.SampleDesc.Count = 8;
+    desc.SampleDesc.Count = config.msaaSamples;
     desc.SampleDesc.Quality = 0;
     while (desc.SampleDesc.Count > 1) {
       UINT quality = 0;
@@ -779,7 +779,7 @@ public:
 
   HRESULT STDMETHODCALLTYPE CreatePixelShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11PixelShader** ppPixelShader) override {
     void* converted = nullptr;
-    if (shouldUseSampleRate(pShaderBytecode, BytecodeLength))
+    if (config.msaaSamples > 1 && shouldUseSampleRate(pShaderBytecode, BytecodeLength))
       converted = convertShaderToSampleRate(pShaderBytecode, BytecodeLength);
     HRESULT res = dev->CreatePixelShader(converted ? converted : pShaderBytecode, BytecodeLength, pClassLinkage, ppPixelShader); 
     if (converted)
@@ -789,7 +789,8 @@ public:
 
   HRESULT STDMETHODCALLTYPE CreateRasterizerState(const D3D11_RASTERIZER_DESC* pRasterizerDesc, ID3D11RasterizerState** ppRasterizerState) override {
     D3D11_RASTERIZER_DESC desc = *pRasterizerDesc;
-    desc.MultisampleEnable = TRUE;
+    if (config.msaaSamples > 1)
+      desc.MultisampleEnable = TRUE;
     return dev->CreateRasterizerState(&desc, ppRasterizerState);
   }
 
@@ -1159,7 +1160,7 @@ public:
     ID3D11RenderTargetView* msaaTex = nullptr;
     ID3D11DepthStencilView* msaaDepth = nullptr;
 
-    if (ppRTVs && RTVCount == 1 && pDSV) {
+    if (config.msaaSamples > 1 && ppRTVs && RTVCount == 1 && pDSV) {
       ppRTVs[0]->GetResource(&base);
       UINT info;
       UINT size = sizeof(info);

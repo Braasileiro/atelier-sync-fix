@@ -17,6 +17,7 @@
 namespace atfix {
 
 Log log("atfix.log");
+Config config { 8, 0 };
 
 /** Load system D3D11 DLL and return entry points */
 using PFN_D3D11CreateDevice = HRESULT (__stdcall *) (
@@ -63,6 +64,30 @@ D3D11Proc loadSystemD3D11() {
       log("Failed to load d3d11.dll (", path.data(), ")");
       return D3D11Proc();
     }
+  }
+
+  if (GetFileAttributesA("atfix.ini") == ~0) {
+    const char* str = "[MSAA]\n"
+                      "; Number of samples (1 = no MSAA)\n"
+                      "NumSamples = 8\n"
+                      "; Whether to do SSAA on transparent objects like grass (expensive)\n"
+                      "ObjectSSAA = 0\n";
+    HANDLE file = CreateFileA("atfix.ini", GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
+    if (file != INVALID_HANDLE_VALUE) {
+      WriteFile(file, str, strlen(str), nullptr, nullptr);
+      CloseHandle(file);
+    }
+  } else {
+    char NumSamples[8];
+    char ObjectSSAA[8];
+    bool ok = true;
+    GetPrivateProfileStringA("MSAA", "NumSamples", "8", NumSamples, sizeof(NumSamples), ".\\atfix.ini");
+    GetPrivateProfileStringA("MSAA", "ObjectSSAA", "8", ObjectSSAA, sizeof(ObjectSSAA), ".\\atfix.ini");
+    config.msaaSamples = atoi(NumSamples);
+    config.ssaaTransparentObjects = atoi(ObjectSSAA);
+    if (config.msaaSamples < 1)
+      config.msaaSamples = 1;
+    log("Loaded config, ", config.msaaSamples, " samples, ", config.ssaaTransparentObjects, " objectSSAA");
   }
 
   d3d11Proc.D3D11CreateDevice = reinterpret_cast<PFN_D3D11CreateDevice>(
