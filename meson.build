@@ -32,8 +32,10 @@ add_project_link_arguments(cpp.get_supported_link_arguments(link_args), language
 add_project_link_arguments(cpp.get_supported_link_arguments(link_args), language: 'c')
 
 d3d11_src = files([
+  'DXBCChecksum.cpp',
   'impl.cpp',
   'main.cpp',
+  'ShaderSamplerRateConverter.cpp',
 ])
 
 d3d11_dll = shared_library('d3d11', d3d11_src,
