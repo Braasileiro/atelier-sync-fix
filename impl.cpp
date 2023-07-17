@@ -10,6 +10,9 @@ static mutex  g_globalMutex;
 /** Metadata */
 static const GUID IID_StagingShadowResource = {0xe2728d91,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 
+static const GUID IID_MSAACandidate = {0xe2728d93,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
+static const GUID IID_MSAATexture = {0xe2728d94,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
+
 struct ATFIX_RESOURCE_INFO {
   D3D11_RESOURCE_DIMENSION Dim;
   DXGI_FORMAT Format;
@@ -179,6 +182,116 @@ bool isCpuReadableResource(
       && (pInfo->CPUFlags & D3D11_CPU_ACCESS_READ)
       && (pInfo->Layers == 1)
       && (pInfo->Mips == 1);
+}
+
+ID3D11Resource* getMSAATexture(ID3D11Resource* host) {
+  ID3D11Resource* res = nullptr;
+  UINT size = sizeof(res);
+  if (SUCCEEDED(host->GetPrivateData(IID_MSAATexture, &size, &res)))
+    return res;
+  return nullptr;
+}
+
+ID3D11RenderTargetView* getMSAARTV(ID3D11RenderTargetView* host) {
+  ID3D11RenderTargetView* res = nullptr;
+  UINT size = sizeof(res);
+  if (SUCCEEDED(host->GetPrivateData(IID_MSAATexture, &size, &res)))
+    return res;
+  return nullptr;
+}
+
+ID3D11DepthStencilView* getMSAADSV(ID3D11DepthStencilView* host) {
+  ID3D11DepthStencilView* res = nullptr;
+  UINT size = sizeof(res);
+  if (SUCCEEDED(host->GetPrivateData(IID_MSAATexture, &size, &res)))
+    return res;
+  return nullptr;
+}
+
+ID3D11RenderTargetView* getOrCreateMSAARTV(ID3D11Device* dev, ID3D11RenderTargetView* host) {
+  ID3D11RenderTargetView* rtv = nullptr;
+  UINT size = sizeof(rtv);
+  if (SUCCEEDED(host->GetPrivateData(IID_MSAATexture, &size, &rtv)))
+    return rtv;
+  ID3D11Texture2D* tex = nullptr;
+  size = sizeof(tex);
+  ID3D11Resource* resource;
+  D3D11_RENDER_TARGET_VIEW_DESC vdesc;
+  host->GetDesc(&vdesc);
+  host->GetResource(&resource);
+  if (FAILED(resource->GetPrivateData(IID_MSAATexture, &size, &tex))) {
+    ID3D11Texture2D* hostTex = nullptr;
+    resource->QueryInterface(IID_PPV_ARGS(&hostTex));
+    D3D11_TEXTURE2D_DESC desc;
+    hostTex->GetDesc(&desc);
+    desc.Format = vdesc.Format;
+    desc.SampleDesc.Count = 8;
+    desc.SampleDesc.Quality = 0;
+    while (desc.SampleDesc.Count > 1) {
+      UINT quality = 0;
+      if (SUCCEEDED(dev->CheckMultisampleQualityLevels(desc.Format, desc.SampleDesc.Count, &quality)) && quality > 0)
+        break;
+      desc.SampleDesc.Count /= 2;
+    }
+    log("Creating ", std::dec, desc.Width, "x", desc.Height, " MSAA color texture with format ", desc.Format, "...");
+    dev->CreateTexture2D(&desc, nullptr, &tex);
+    resource->SetPrivateDataInterface(IID_MSAATexture, tex);
+  }
+  resource->Release();
+  vdesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DMS;
+  dev->CreateRenderTargetView(tex, &vdesc, &rtv);
+  host->SetPrivateDataInterface(IID_MSAATexture, rtv);
+  tex->Release();
+  return rtv;
+}
+
+ID3D11DepthStencilView* getOrCreateMSAADSV(ID3D11Device* dev, ID3D11DepthStencilView* host) {
+  ID3D11DepthStencilView* dsv = nullptr;
+  UINT size = sizeof(dsv);
+  if (SUCCEEDED(host->GetPrivateData(IID_MSAATexture, &size, &dsv)))
+    return dsv;
+  ID3D11Texture2D* tex = nullptr;
+  size = sizeof(tex);
+  ID3D11Resource* resource;
+  D3D11_DEPTH_STENCIL_VIEW_DESC vdesc;
+  host->GetResource(&resource);
+  host->GetDesc(&vdesc);
+  if (FAILED(resource->GetPrivateData(IID_MSAATexture, &size, &tex))) {
+    ID3D11Texture2D* hostTex = nullptr;
+    resource->QueryInterface(IID_PPV_ARGS(&hostTex));
+    D3D11_TEXTURE2D_DESC desc;
+    hostTex->GetDesc(&desc);
+    desc.Format = vdesc.Format;
+    desc.SampleDesc.Count = 8;
+    desc.SampleDesc.Quality = 0;
+    while (desc.SampleDesc.Count > 1) {
+      UINT quality = 0;
+      if (SUCCEEDED(dev->CheckMultisampleQualityLevels(desc.Format, desc.SampleDesc.Count, &quality)) && quality > 0)
+        break;
+      desc.SampleDesc.Count /= 2;
+    }
+    log("Creating ", std::dec, desc.Width, "x", desc.Height, " MSAA depth texture with format ", desc.Format, "...");
+    dev->CreateTexture2D(&desc, nullptr, &tex);
+    resource->SetPrivateDataInterface(IID_MSAATexture, tex);
+  }
+  resource->Release();
+  vdesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMS;
+  dev->CreateDepthStencilView(tex, &vdesc, &dsv);
+  host->SetPrivateDataInterface(IID_MSAATexture, dsv);
+  tex->Release();
+  return dsv;
+}
+
+void resolveIfMSAA(ID3D11DeviceContext* ctx, ID3D11Resource* res) {
+  if (ID3D11Resource* msaa = getMSAATexture(res)) {
+    ID3D11Texture2D* tex;
+    D3D11_TEXTURE2D_DESC desc;
+    msaa->QueryInterface(IID_PPV_ARGS(&tex));
+    tex->GetDesc(&desc);
+    tex->Release();
+    ctx->ResolveSubresource(res, 0, msaa, 0, desc.Format);
+    msaa->Release();
+  }
 }
 
 ID3D11Resource* createShadowResourceLocked(
@@ -645,7 +758,6 @@ public:
   HRESULT STDMETHODCALLTYPE CreateClassLinkage(ID3D11ClassLinkage** ppLinkage) override { return dev->CreateClassLinkage(ppLinkage); }
   HRESULT STDMETHODCALLTYPE CreateBlendState(const D3D11_BLEND_DESC* pBlendStateDesc, ID3D11BlendState** ppBlendState) override { return dev->CreateBlendState(pBlendStateDesc, ppBlendState); }
   HRESULT STDMETHODCALLTYPE CreateDepthStencilState(const D3D11_DEPTH_STENCIL_DESC* pDepthStencilDesc, ID3D11DepthStencilState** ppDepthStencilState) override { return dev->CreateDepthStencilState(pDepthStencilDesc, ppDepthStencilState); }
-  HRESULT STDMETHODCALLTYPE CreateRasterizerState(const D3D11_RASTERIZER_DESC* pRasterizerDesc, ID3D11RasterizerState** ppRasterizerState) override { return dev->CreateRasterizerState(pRasterizerDesc, ppRasterizerState); }
   HRESULT STDMETHODCALLTYPE CreateSamplerState(const D3D11_SAMPLER_DESC* pSamplerDesc, ID3D11SamplerState** ppSamplerState) override { return dev->CreateSamplerState(pSamplerDesc, ppSamplerState); }
   HRESULT STDMETHODCALLTYPE CreateQuery(const D3D11_QUERY_DESC* pQueryDesc, ID3D11Query** ppQuery) override { return dev->CreateQuery(pQueryDesc, ppQuery); }
   HRESULT STDMETHODCALLTYPE CreatePredicate(const D3D11_QUERY_DESC* pPredicateDesc, ID3D11Predicate** ppPredicate) override { return dev->CreatePredicate(pPredicateDesc, ppPredicate); }
@@ -664,6 +776,12 @@ public:
   HRESULT STDMETHODCALLTYPE GetDeviceRemovedReason(void) override { return dev->GetDeviceRemovedReason(); }
   HRESULT STDMETHODCALLTYPE SetExceptionMode(UINT RaiseFlags) override { return dev->SetExceptionMode(RaiseFlags); }
   UINT STDMETHODCALLTYPE GetExceptionMode(void) override { return dev->GetExceptionMode(); }
+
+  HRESULT STDMETHODCALLTYPE CreateRasterizerState(const D3D11_RASTERIZER_DESC* pRasterizerDesc, ID3D11RasterizerState** ppRasterizerState) override {
+    D3D11_RASTERIZER_DESC desc = *pRasterizerDesc;
+    desc.MultisampleEnable = TRUE;
+    return dev->CreateRasterizerState(&desc, ppRasterizerState);
+  }
 
   HRESULT STDMETHODCALLTYPE CreateBuffer(
     const D3D11_BUFFER_DESC*        pDesc,
@@ -815,7 +933,6 @@ public:
   void RSSetViewports(UINT NumViewports, const D3D11_VIEWPORT* pViewports) override { ctx->RSSetViewports(NumViewports, pViewports); }
   void RSSetScissorRects(UINT NumRects, const D3D11_RECT* pRects) override { ctx->RSSetScissorRects(NumRects, pRects); }
   void CopyStructureCount(ID3D11Buffer* pDstBuffer, UINT DstAlignedByteOffset, ID3D11UnorderedAccessView* pSrcView) override { ctx->CopyStructureCount(pDstBuffer, DstAlignedByteOffset, pSrcView); }
-  void ClearDepthStencilView(ID3D11DepthStencilView* pDepthStencilView, UINT ClearFlags, FLOAT Depth, UINT8 Stencil) override { ctx->ClearDepthStencilView(pDepthStencilView, ClearFlags, Depth, Stencil); }
   void GenerateMips(ID3D11ShaderResourceView* pShaderResourceView) override { ctx->GenerateMips(pShaderResourceView); }
   void SetResourceMinLOD(ID3D11Resource* pResource, FLOAT MinLOD) override { ctx->SetResourceMinLOD(pResource, MinLOD); }
   FLOAT GetResourceMinLOD(ID3D11Resource* pResource) override { return ctx->GetResourceMinLOD(pResource); }
@@ -878,10 +995,23 @@ public:
   UINT GetContextFlags() override { return ctx->GetContextFlags(); }
   HRESULT FinishCommandList(BOOL RestoreDeferredContextState, ID3D11CommandList** ppCommandList) override { return ctx->FinishCommandList(RestoreDeferredContextState, ppCommandList); }
 
+  void ClearDepthStencilView(ID3D11DepthStencilView* pDepthStencilView, UINT ClearFlags, FLOAT Depth, UINT8 Stencil) override {
+    if (ID3D11DepthStencilView* msaa = getMSAADSV(pDepthStencilView)) {
+        ctx->ClearDepthStencilView(msaa, ClearFlags, Depth, Stencil);
+        msaa->Release();
+    } else {
+      ctx->ClearDepthStencilView(pDepthStencilView, ClearFlags, Depth, Stencil);
+    }
+  }
+
   void ClearRenderTargetView(
           ID3D11RenderTargetView*   pRTV,
     const FLOAT                     pColor[4]) override {
-    ctx->ClearRenderTargetView(pRTV, pColor);
+    if (ID3D11RenderTargetView* msaa = getMSAARTV(pRTV)) {
+      ctx->ClearRenderTargetView(msaa, pColor);
+    } else {
+      ctx->ClearRenderTargetView(pRTV, pColor);
+    }
     if (pRTV)
       updateViewShadowResource(ctx, pRTV);
   }
@@ -906,6 +1036,8 @@ public:
           ID3D11Resource*           pDstResource,
           ID3D11Resource*           pSrcResource) override {
     ID3D11Resource* dstShadow = getShadowResource(pDstResource);
+
+    resolveIfMSAA(ctx, pSrcResource);
 
     bool needsBaseCopy = true;
     bool needsShadowCopy = true;
@@ -944,6 +1076,16 @@ public:
     const D3D11_BOX*                pSrcBox) override {
 
     ID3D11Resource* dstShadow = getShadowResource(pDstResource);
+
+    resolveIfMSAA(ctx, pSrcResource);
+    UINT info;
+    UINT size = sizeof(info);
+    if (SUCCEEDED(pSrcResource->GetPrivateData(IID_MSAACandidate, &size, &info)) && info == 1) {
+      // Sophie always copies from its main render target to another one for postprocessing effects
+      // Detect that to enable MSAA on it
+      info = 2;
+      pSrcResource->SetPrivateData(IID_MSAACandidate, sizeof(info), &info);
+    }
 
     bool needsBaseCopy = true;
     bool needsShadowCopy = true;
@@ -1002,7 +1144,41 @@ public:
           ID3D11RenderTargetView* const* ppRTVs,
           ID3D11DepthStencilView*   pDSV) override {
     updateRtvShadowResources(ctx);
+
+    ID3D11Resource* base = nullptr;
+    ID3D11RenderTargetView* msaaTex = nullptr;
+    ID3D11DepthStencilView* msaaDepth = nullptr;
+
+    if (ppRTVs && RTVCount == 1 && pDSV) {
+      ppRTVs[0]->GetResource(&base);
+      UINT info;
+      UINT size = sizeof(info);
+      if (SUCCEEDED(base->GetPrivateData(IID_MSAACandidate, &size, &info)) && info == 2) {
+        ID3D11Device* dev;
+        ctx->GetDevice(&dev);
+        msaaTex = getOrCreateMSAARTV(dev, ppRTVs[0]);
+        msaaDepth = getOrCreateMSAADSV(dev, pDSV);
+        ppRTVs = &msaaTex;
+        pDSV = msaaDepth;
+        dev->Release();
+      }
+    }
+
     ctx->OMSetRenderTargets(RTVCount, ppRTVs, pDSV);
+
+    if (base && pDSV && !msaaTex) {
+      UINT value = 1;
+      ID3D11Texture2D* tex;
+      D3D11_TEXTURE2D_DESC desc;
+      base->QueryInterface(IID_PPV_ARGS(&tex));
+      tex->GetDesc(&desc);
+      tex->Release();
+      base->SetPrivateData(IID_MSAACandidate, sizeof(value), &value);
+    }
+
+    if (base) base->Release();
+    if (msaaTex) msaaTex->Release();
+    if (msaaDepth) msaaDepth->Release();
   }
 
   void OMSetRenderTargetsAndUnorderedAccessViews(
