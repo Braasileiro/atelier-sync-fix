@@ -28,6 +28,10 @@ struct ATFIX_RESOURCE_INFO {
   uint32_t CPUFlags;
 };
 
+static bool isPowerOfTwo(UINT value) {
+  return (value & (value - 1)) == 0;
+}
+
 void* ptroffset(void* base, ptrdiff_t offset) {
   auto address = reinterpret_cast<uintptr_t>(base) + offset;
   return reinterpret_cast<void*>(address);
@@ -744,9 +748,7 @@ public:
   HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(UINT MaxLatency) override { return dxgi->SetMaximumFrameLatency(MaxLatency); }
   HRESULT STDMETHODCALLTYPE GetMaximumFrameLatency(UINT* pMaxLatency) override { return dxgi->GetMaximumFrameLatency(pMaxLatency); }
 
-  HRESULT STDMETHODCALLTYPE CreateShaderResourceView(ID3D11Resource* pResource, const D3D11_SHADER_RESOURCE_VIEW_DESC* pDesc, ID3D11ShaderResourceView** ppSRView) override { return dev->CreateShaderResourceView(pResource, pDesc, ppSRView); }
   HRESULT STDMETHODCALLTYPE CreateUnorderedAccessView(ID3D11Resource* pResource, const D3D11_UNORDERED_ACCESS_VIEW_DESC* pDesc, ID3D11UnorderedAccessView** ppUAView) override { return dev->CreateUnorderedAccessView(pResource, pDesc, ppUAView); }
-  HRESULT STDMETHODCALLTYPE CreateRenderTargetView(ID3D11Resource* pResource, const D3D11_RENDER_TARGET_VIEW_DESC* pDesc, ID3D11RenderTargetView** ppRTView) override { return dev->CreateRenderTargetView(pResource, pDesc, ppRTView); }
   HRESULT STDMETHODCALLTYPE CreateDepthStencilView(ID3D11Resource* pResource, const D3D11_DEPTH_STENCIL_VIEW_DESC* pDesc, ID3D11DepthStencilView** ppDepthStencilView) override { return dev->CreateDepthStencilView(pResource, pDesc, ppDepthStencilView); }
   HRESULT STDMETHODCALLTYPE CreateInputLayout(const D3D11_INPUT_ELEMENT_DESC* pInputElementDescs, UINT NumElements, const void* pShaderBytecodeWithInputSignature, SIZE_T BytecodeLength, ID3D11InputLayout** ppInputLayout) override { return dev->CreateInputLayout(pInputElementDescs, NumElements, pShaderBytecodeWithInputSignature, BytecodeLength, ppInputLayout); }
   HRESULT STDMETHODCALLTYPE CreateVertexShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11VertexShader** ppVertexShader) override { return dev->CreateVertexShader(pShaderBytecode, BytecodeLength, pClassLinkage, ppVertexShader); }
@@ -776,6 +778,40 @@ public:
   HRESULT STDMETHODCALLTYPE GetDeviceRemovedReason(void) override { return dev->GetDeviceRemovedReason(); }
   HRESULT STDMETHODCALLTYPE SetExceptionMode(UINT RaiseFlags) override { return dev->SetExceptionMode(RaiseFlags); }
   UINT STDMETHODCALLTYPE GetExceptionMode(void) override { return dev->GetExceptionMode(); }
+
+  HRESULT STDMETHODCALLTYPE CreateShaderResourceView(ID3D11Resource* pResource, const D3D11_SHADER_RESOURCE_VIEW_DESC* pDesc, ID3D11ShaderResourceView** ppSRView) override {
+    ID3D11Texture2D* tex = nullptr;
+    D3D11_SHADER_RESOURCE_VIEW_DESC desc;
+    if (SUCCEEDED(pResource->QueryInterface(IID_PPV_ARGS(&tex)))) {
+      D3D11_TEXTURE2D_DESC tdesc;
+      tex->GetDesc(&tdesc);
+      if (tdesc.Format == DXGI_FORMAT_R16G16B16A16_UNORM && pDesc->Format == DXGI_FORMAT_B8G8R8A8_UNORM) {
+        // Our modified shadow texture
+        desc = *pDesc;
+        desc.Format = DXGI_FORMAT_R16G16B16A16_UNORM;
+        pDesc = &desc;
+      }
+      tex->Release();
+    }
+    return dev->CreateShaderResourceView(pResource, pDesc, ppSRView);
+  }
+
+  HRESULT STDMETHODCALLTYPE CreateRenderTargetView(ID3D11Resource* pResource, const D3D11_RENDER_TARGET_VIEW_DESC* pDesc, ID3D11RenderTargetView** ppRTView) override {
+    ID3D11Texture2D* tex = nullptr;
+    D3D11_RENDER_TARGET_VIEW_DESC desc;
+    if (SUCCEEDED(pResource->QueryInterface(IID_PPV_ARGS(&tex)))) {
+      D3D11_TEXTURE2D_DESC tdesc;
+      tex->GetDesc(&tdesc);
+      if (tdesc.Format == DXGI_FORMAT_R16G16B16A16_UNORM && pDesc->Format == DXGI_FORMAT_B8G8R8A8_UNORM) {
+        // Our modified shadow texture
+        desc = *pDesc;
+        desc.Format = DXGI_FORMAT_R16G16B16A16_UNORM;
+        pDesc = &desc;
+      }
+      tex->Release();
+    }
+    return dev->CreateRenderTargetView(pResource, pDesc, ppRTView);
+  }
 
   HRESULT STDMETHODCALLTYPE CreatePixelShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11PixelShader** ppPixelShader) override {
     void* converted = nullptr;
@@ -849,6 +885,14 @@ public:
     if (pDesc && pDesc->Usage == D3D11_USAGE_STAGING) {
       desc = *pDesc;
       desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+      pDesc = &desc;
+    }
+
+    if (pDesc && isPowerOfTwo(pDesc->Width) && isPowerOfTwo(pDesc->Height) && pDesc->Format == DXGI_FORMAT_B8G8R8A8_TYPELESS && (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET)) {
+      // Unless someone has a really weird display resolution, this is the shadow texture
+      // Increase its bit depth to prevent glitchy shadows
+      desc = *pDesc;
+      desc.Format = DXGI_FORMAT_R16G16B16A16_UNORM;
       pDesc = &desc;
     }
 
