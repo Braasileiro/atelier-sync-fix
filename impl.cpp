@@ -13,6 +13,7 @@ static const GUID IID_StagingShadowResource = {0xe2728d91,0x9fdd,0x40d0,{0x87,0x
 
 static const GUID IID_MSAACandidate = {0xe2728d93,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 static const GUID IID_MSAATexture = {0xe2728d94,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
+static const GUID IID_AlphaToCoverage = {0xe2728d95,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 
 struct ATFIX_RESOURCE_INFO {
   D3D11_RESOURCE_DIMENSION Dim;
@@ -815,9 +816,18 @@ public:
 
   HRESULT STDMETHODCALLTYPE CreatePixelShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11PixelShader** ppPixelShader) override {
     void* converted = nullptr;
+    Buffer alphaToCoverageBytecode;
     if (config.msaaSamples > 1 && shouldUseSampleRate(pShaderBytecode, BytecodeLength))
       converted = convertShaderToSampleRate(pShaderBytecode, BytecodeLength);
     HRESULT res = dev->CreatePixelShader(converted ? converted : pShaderBytecode, BytecodeLength, pClassLinkage, ppPixelShader); 
+    if (config.msaaSamples > 1 && !converted && SUCCEEDED(res) && (alphaToCoverageBytecode = convertShaderToAlphaToCoverage(pShaderBytecode, BytecodeLength)).data) {
+      ID3D11PixelShader* a2cShader;
+      if (SUCCEEDED(dev->CreatePixelShader(alphaToCoverageBytecode.data, alphaToCoverageBytecode.length, pClassLinkage, &a2cShader))) {
+        (*ppPixelShader)->SetPrivateDataInterface(IID_AlphaToCoverage, a2cShader);
+        a2cShader->Release();
+      }
+      free(alphaToCoverageBytecode.data);
+    }
     if (converted)
       free(converted);
     return res;
@@ -918,6 +928,11 @@ public:
 class ContextWrapper final : public ID3D11DeviceContext {
   LONG refcnt;
   ID3D11DeviceContext* ctx;
+  ID3D11BlendState* alphaToCoverageBlend = nullptr;
+  ID3D11BlendState* requestedBlend = nullptr;
+  ID3D11PixelShader* requestedPS = nullptr;
+  bool blendStateSupportsA2C = false;
+  bool psSupportsA2C = false;
 
 public:
   ContextWrapper(ID3D11DeviceContext* ctx_) : refcnt(1), ctx(ctx_) {}
@@ -939,10 +954,29 @@ public:
   ULONG Release() override {
     ULONG res = InterlockedAdd(&refcnt, -1);
     if (res == 0) {
+      if (alphaToCoverageBlend)
+        alphaToCoverageBlend->Release();
       ctx->Release();
       delete this;
     }
     return res;
+  }
+
+  bool ShouldUseA2C() const { return psSupportsA2C && blendStateSupportsA2C; }
+
+  ID3D11BlendState* GetAlphaToCoverageBlend() {
+    if (!alphaToCoverageBlend) {
+      ID3D11Device* dev;
+      ctx->GetDevice(&dev);
+      D3D11_BLEND_DESC desc = {};
+      desc.AlphaToCoverageEnable = TRUE;
+      desc.IndependentBlendEnable = TRUE;
+      for (D3D11_RENDER_TARGET_BLEND_DESC& target : desc.RenderTarget)
+        target.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+      dev->CreateBlendState(&desc, &alphaToCoverageBlend);
+      dev->Release();
+    }
+    return alphaToCoverageBlend;
   }
 
   // ID3D11DeviceChild
@@ -954,7 +988,6 @@ public:
   // ID3D11DeviceContext
   void VSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) override { ctx->VSSetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers); }
   void PSSetShaderResources(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppShaderResourceViews) override { ctx->PSSetShaderResources(StartSlot, NumViews, ppShaderResourceViews); }
-  void PSSetShader(ID3D11PixelShader* pPixelShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override { ctx->PSSetShader(pPixelShader, ppClassInstances, NumClassInstances); }
   void PSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) override { ctx->PSSetSamplers(StartSlot, NumSamplers, ppSamplers); }
   void VSSetShader(ID3D11VertexShader* pVertexShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override { ctx->VSSetShader(pVertexShader, ppClassInstances, NumClassInstances); }
   void DrawIndexed(UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) override { ctx->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation); }
@@ -978,7 +1011,6 @@ public:
   void SetPredication(ID3D11Predicate* pPredicate, BOOL PredicateValue) override { ctx->SetPredication(pPredicate, PredicateValue); }
   void GSSetShaderResources(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppShaderResourceViews) override { ctx->GSSetShaderResources(StartSlot, NumViews, ppShaderResourceViews); }
   void GSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) override { ctx->GSSetSamplers(StartSlot, NumSamplers, ppSamplers); }
-  void OMSetBlendState(ID3D11BlendState* pBlendState, const FLOAT BlendFactor[4], UINT SampleMask) override { ctx->OMSetBlendState(pBlendState, BlendFactor, SampleMask); }
   void OMSetDepthStencilState(ID3D11DepthStencilState* pDepthStencilState, UINT StencilRef) override { ctx->OMSetDepthStencilState(pDepthStencilState, StencilRef); }
   void SOSetTargets(UINT NumBuffers, ID3D11Buffer* const* ppSOTargets, const UINT* pOffsets) override { ctx->SOSetTargets(NumBuffers, ppSOTargets, pOffsets); }
   void DrawAuto() override { ctx->DrawAuto(); }
@@ -1050,10 +1082,53 @@ public:
   UINT GetContextFlags() override { return ctx->GetContextFlags(); }
   HRESULT FinishCommandList(BOOL RestoreDeferredContextState, ID3D11CommandList** ppCommandList) override { return ctx->FinishCommandList(RestoreDeferredContextState, ppCommandList); }
 
+  void PSSetShader(ID3D11PixelShader* pPixelShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override {
+    requestedPS = pPixelShader;
+    ID3D11PixelShader* a2c = nullptr;
+    bool oldUseA2C = ShouldUseA2C();
+    if (pPixelShader) {
+      UINT size = sizeof(a2c);
+      pPixelShader->GetPrivateData(IID_AlphaToCoverage, &size, &a2c);
+    }
+    psSupportsA2C = a2c;
+    bool newUseA2C = ShouldUseA2C();
+    if (newUseA2C)
+        pPixelShader = a2c;
+    if (newUseA2C != oldUseA2C) {
+        FLOAT factor[4];
+        UINT sampleMask;
+        ctx->OMGetBlendState(nullptr, factor, &sampleMask);
+        ctx->OMSetBlendState(newUseA2C ? GetAlphaToCoverageBlend() : requestedBlend, factor, sampleMask);
+    }
+    ctx->PSSetShader(pPixelShader, ppClassInstances, NumClassInstances);
+    if (a2c)
+      a2c->Release();
+  }
+
+  void OMSetBlendState(ID3D11BlendState* pBlendState, const FLOAT BlendFactor[4], UINT SampleMask) override {
+    requestedBlend = pBlendState;
+    bool oldUseA2C = ShouldUseA2C();
+    if (pBlendState) {
+      D3D11_BLEND_DESC desc;
+      pBlendState->GetDesc(&desc);
+      bool ok = true;
+      for (D3D11_RENDER_TARGET_BLEND_DESC& target : desc.RenderTarget)
+        ok &= !target.BlendEnable;
+      blendStateSupportsA2C = ok;
+    } else {
+      blendStateSupportsA2C = false;
+    }
+    bool newUseA2C = ShouldUseA2C();
+    if (!newUseA2C)
+      ctx->OMSetBlendState(pBlendState, BlendFactor, SampleMask);
+    else if (!oldUseA2C)
+      ctx->OMSetBlendState(GetAlphaToCoverageBlend(), BlendFactor, SampleMask);
+  }
+
   void ClearDepthStencilView(ID3D11DepthStencilView* pDepthStencilView, UINT ClearFlags, FLOAT Depth, UINT8 Stencil) override {
     if (ID3D11DepthStencilView* msaa = getMSAADSV(pDepthStencilView)) {
-        ctx->ClearDepthStencilView(msaa, ClearFlags, Depth, Stencil);
-        msaa->Release();
+      ctx->ClearDepthStencilView(msaa, ClearFlags, Depth, Stencil);
+      msaa->Release();
     } else {
       ctx->ClearDepthStencilView(pDepthStencilView, ClearFlags, Depth, Stencil);
     }
@@ -1064,6 +1139,7 @@ public:
     const FLOAT                     pColor[4]) override {
     if (ID3D11RenderTargetView* msaa = getMSAARTV(pRTV)) {
       ctx->ClearRenderTargetView(msaa, pColor);
+      msaa->Release();
     } else {
       ctx->ClearRenderTargetView(pRTV, pColor);
     }
