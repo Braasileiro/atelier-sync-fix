@@ -78,10 +78,21 @@
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
   </ItemDefinitionGroup>
+  <PropertyGroup>
+    <CustomBuildBeforeTargets>ClCompile</CustomBuildBeforeTargets>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <CustomBuildStep>
+      <Command>powershell.exe -NonInteractive -executionpolicy Unrestricted -command $(ProjectDir)build-shaders.ps1</Command>
+      <Inputs>$(ProjectDir)build-shaders.ps1;$(ProjectDir)Shadows.hlsl;$(ProjectDir)Environment.hlsl</Inputs>
+      <Outputs>$(ProjectDir)Shaders.cpp</Outputs>
+    </CustomBuildStep>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="DXBCChecksum.h" />
     <ClInclude Include="impl.h" />
     <ClInclude Include="log.h" />
+    <ClInclude Include="Shaders.h" />
     <ClInclude Include="ShaderSampleRateConverter.h" />
     <ClInclude Include="util.h" />
   </ItemGroup>
@@ -89,7 +100,17 @@
     <ClCompile Include="DXBCChecksum.cpp" />
     <ClCompile Include="impl.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="Shaders.cpp" />
     <ClCompile Include="ShaderSampleRateConverter.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="build-shaders.ps1" />
+    <FxCompile Include="Shadows.hlsl">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </FxCompile>
+    <FxCompile Include="Environment.hlsl">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </FxCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

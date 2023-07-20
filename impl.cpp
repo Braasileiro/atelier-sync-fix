@@ -815,18 +815,23 @@ public:
   }
 
   HRESULT STDMETHODCALLTYPE CreatePixelShader(const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11PixelShader** ppPixelShader) override {
+    const void* bytecode = pShaderBytecode;
+    SIZE_T length = BytecodeLength;
     void* converted = nullptr;
-    Buffer alphaToCoverageBytecode;
+    Buffer buffer;
+    if ((buffer = getReplacementShader(pShaderBytecode, BytecodeLength)).data) {
+      bytecode = buffer.data;
+      length = buffer.length;
+    }
     if (config.msaaSamples > 1 && shouldUseSampleRate(pShaderBytecode, BytecodeLength))
-      converted = convertShaderToSampleRate(pShaderBytecode, BytecodeLength);
-    HRESULT res = dev->CreatePixelShader(converted ? converted : pShaderBytecode, BytecodeLength, pClassLinkage, ppPixelShader); 
-    if (config.msaaSamples > 1 && !converted && SUCCEEDED(res) && (alphaToCoverageBytecode = convertShaderToAlphaToCoverage(pShaderBytecode, BytecodeLength)).data) {
+      converted = convertShaderToSampleRate(bytecode, length);
+    HRESULT res = dev->CreatePixelShader(converted ? converted : bytecode, length, pClassLinkage, ppPixelShader);
+    if (config.msaaSamples > 1 && !converted && SUCCEEDED(res) && (buffer = getAlphaToCoverageShader(pShaderBytecode, BytecodeLength)).data) {
       ID3D11PixelShader* a2cShader;
-      if (SUCCEEDED(dev->CreatePixelShader(alphaToCoverageBytecode.data, alphaToCoverageBytecode.length, pClassLinkage, &a2cShader))) {
+      if (SUCCEEDED(dev->CreatePixelShader(buffer.data, buffer.length, pClassLinkage, &a2cShader))) {
         (*ppPixelShader)->SetPrivateDataInterface(IID_AlphaToCoverage, a2cShader);
         a2cShader->Release();
       }
-      free(alphaToCoverageBytecode.data);
     }
     if (converted)
       free(converted);

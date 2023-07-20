@@ -3,8 +3,9 @@
 #include <windows.h>
 
 namespace atfix {
+// A pointer to (unowned) data
 struct Buffer {
-  void* data;
+  const void* data;
   SIZE_T length;
 };
 
@@ -14,7 +15,9 @@ bool shouldUseSampleRate(const void* data, SIZE_T length);
 // The caller should free the pointer with `free`
 void* convertShaderToSampleRate(const void* data, SIZE_T length);
 
-// Converts a shader to use alpha to coverage if supported, else returns a null buffer
-// The caller should free the buffer with `free`
-Buffer convertShaderToAlphaToCoverage(const void* data, SIZE_T length);
+// Returns a shader to replace the given shader, or a null buffer if no replacements exist for the given shader
+Buffer getReplacementShader(const void* data, SIZE_T length);
+
+// Returns a shader to use alpha to coverage if supported, otherwise a null buffer
+Buffer getAlphaToCoverageShader(const void* data, SIZE_T length);
 } // namespace atfix

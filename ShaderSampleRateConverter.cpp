@@ -1,5 +1,6 @@
 #include "ShaderSampleRateConverter.h"
 
+#include "Shaders.h"
 #include "DXBCChecksum.h"
 #include "impl.h"
 
@@ -23,18 +24,6 @@ struct ShaderPatch {
 
 extern const ShaderPatch alphaToCoverageObjectShader;
 
-struct ShaderHash {
-  DWORD value[4];
-  bool operator==(const ShaderHash& other) const {
-    bool eq = true;
-    eq &= value[0] == other.value[0];
-    eq &= value[1] == other.value[1];
-    eq &= value[2] == other.value[2];
-    eq &= value[3] == other.value[3];
-    return eq;
-  }
-};
-
 struct ShaderHeader {
   DWORD magic;
   ShaderHash hash;
@@ -49,30 +38,6 @@ struct DXBCChunk {
   DWORD length;
   DWORD data[];
 };
-
-static Buffer applyPatch(const void* data, SIZE_T length, ShaderPatch patch) {
-  SIZE_T ndwords = 0;
-  const DWORD* original = static_cast<const DWORD*>(data);
-  for (SIZE_T i = 0; i < patch.numEntries; i++)
-    ndwords += patch.entries[i].length;
-  Buffer out;
-  out.length = ndwords * sizeof(DWORD);
-  out.data = malloc(out.length);
-  if (!out.data) {
-    out.length = 0;
-    return out;
-  }
-  BYTE* write = static_cast<BYTE*>(out.data);
-  for (SIZE_T i = 0; i < patch.numEntries; i++) {
-    const ShaderPatch::Entry& entry = patch.entries[i];
-    SIZE_T len = entry.length * sizeof(DWORD);
-    const DWORD* base = entry.fromOriginal ? original : patch.replacementData;
-    memcpy(write, base + entry.offset, len);
-    write += len;
-  }
-  CalculateDXBCChecksum(static_cast<BYTE*>(out.data), out.length, static_cast<ShaderHeader*>(out.data)->hash.value);
-  return out;
-}
 
 bool shouldUseSampleRate(const void* data, SIZE_T length) {
   const ShaderHeader* header = static_cast<const ShaderHeader*>(data);
@@ -148,49 +113,21 @@ void* convertShaderToSampleRate(const void* data, SIZE_T length) {
   return out;
 }
 
-Buffer convertShaderToAlphaToCoverage(const void* data, SIZE_T length) {
+static Buffer findReplacement(const void* data, SIZE_T length, ShaderReplacementList list) {
   const ShaderHeader* header = static_cast<const ShaderHeader*>(data);
-  const ShaderPatch* patch = nullptr;
-  if (header->hash == ShaderHash({ 0x0cd1b9e5, 0x22e7069e, 0x476455ff, 0x98bfd850 }))
-    patch = &alphaToCoverageObjectShader;
-  if (!patch)
-    return {nullptr, 0};
-  return applyPatch(data, length, *patch);
+  for (SIZE_T i = 0; i < list.count; i++) {
+    if (header->hash == list.replacements[i].originalHash)
+      return { list.replacements[i].newShader, list.replacements[i].newShaderLength };
+  }
+  return { nullptr, 0 };
 }
 
-static constexpr DWORD alphaToCoverageObjectShaderReplacementData[] = {
-  // [ 0] Shader header @ 0
-  0x43425844, 0x0cd1b9e5, 0x22e7069e, 0x476455ff, 0x98bfd850, 0x00000001, 0x00003414, 0x00000005,
-  0x00000034, 0x0000038c, 0x0000045c, 0x00000490, 0x00003378,
-  // [13] SHEX data length info @ 0x494
-  0x2ee0, 0x50, 0xbb8,
-  // [16] Number of temporary registers @ 0x560
-  9,
-  // [17] Alpha to coverage calculation @ 0x61c replaces 0x4c
-  0x0500007b, 0x00100012, 8, 0x0010003a, 2,                            // deriv_rtx_fine r8.x, r2.w
-  0x0500007d, 0x00100022, 8, 0x0010003a, 2,                            // deriv_rty_fine r8.y, r2.w
-  0x09000000, 0x00100012, 8, 0x8010000a, 0x81, 8, 0x8010001a, 0x81, 8, // add r8.x, |r8.x|, |r8.y|
-  0x09000000, 0x00100022, 8, 0x0010003a, 2, 0x8020801a, 0x41, 0, 0,    // add r8.y, r2.w, -vATest
-  0x0700000e, 0x00100012, 8, 0x0010001a, 8, 0x0010000a, 8,             // div r8.x, r8.y, r8.x
-  0x07002000, 0x00100012, 8, 0x0010000a, 8, 0x00004001, 0x3f000000,    // add_sat r8.x, r8.x, l(0.5)
-  0x0300000d, 0x0010000a, 8,                                           // discard_z r8.x
-  // [62] Move final alpha value into o0 @ 0x32f8
-  0x05000036, 0x00102082, 0, 0x0010000a, 8,                            // mov o0.w, r8.x
-};
+Buffer getReplacementShader(const void* data, SIZE_T length) {
+  return findReplacement(data, length, shaderReplacements);
+}
 
-static constexpr ShaderPatch::Entry alphaToCoverageObjectShaderReplacementEntries[] = {
-  {   0,   13, FALSE}, // Header
-  {  13,  280, TRUE},
-  {  13,    3, FALSE}, // SHEX data length info
-  { 296,   48, TRUE},
-  {  16,    1, FALSE}, // # tmp registers
-  { 345,   46, TRUE},
-  {  17,   45, FALSE}, // Alpha coverage code
-  { 410, 2852, TRUE},
-  {  62,    5, FALSE}, // Final alpha write
-  {3267,   40, TRUE},
-};
-
-constexpr ShaderPatch alphaToCoverageObjectShader(alphaToCoverageObjectShaderReplacementData, alphaToCoverageObjectShaderReplacementEntries);
+Buffer getAlphaToCoverageShader(const void* data, SIZE_T length) {
+  return findReplacement(data, length, shaderReplacementsAlphaToCoverage);
+}
 
 } // namespace atfix
