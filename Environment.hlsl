@@ -11,6 +11,9 @@
 #define ALPHA 0
 #endif
 
+//#define SHADOW_IMPLEMENTATION_GAME
+#define SHADOW_IMPLEMENTATION_GATHER
+
 cbuffer Globals {
 #if ALPHA > 0
 	float nStageNum;
@@ -102,6 +105,10 @@ float4 main(float4 pos : SV_Position, PSInput input) : SV_TARGET{
 	shadowBase += scSM2.xy; // -1.5px offset
 	float shadowRef = saturate(input.shadow.z / input.shadow.w);
 	float shadow = 0;
+#ifdef SHADOW_IMPLEMENTATION_GAME
+	// The shadow sampling algorithm used by the original game
+	// Seems to be a full SampleCompare emulation, executed for a 4x4 grid
+	// 64 (!) texture loads, and manual calculation of each coordinate
 	[unroll] for (uint x = 0; x < 4; x++) {
 		float acc = 0;
 		[unroll] for (uint y = 0; y < 4; y++) {
@@ -121,6 +128,66 @@ float4 main(float4 pos : SV_Position, PSInput input) : SV_TARGET{
 		shadow += acc;
 	}
 	shadow *= (1.0 / 16.0);
+#elif !defined(SHADOW_IMPLEMENTATION_GATHER)
+	// We can make things a little cheaper by realizing they don't actually sample 64 different pixels
+	// Since each of the 16 bilinear operations samples four pixels in a square, and each operation is at a 1 pixel offset from the next, we only actually need to sample 25 pixels
+	// In addition, we only need to calculate the fractional position once, and can use offset sampling for the rest
+	// (Yes I realize there's a dedicated SampleCompare instruction, but that would require changing the sampler and I'm lazy.  Also, if you scroll down, we can actually do better than the 16 samples that would take)
+	{
+		float2 scaled = shadowBase * scSM.zw;
+		float2 offset = frac(scaled - 0.5);
+		float2 coord = shadowBase - offset * scSM.xy;
+		float4 weights = float4(1 - offset, offset); // Weight for left, top, right, bottom edges
+		float row[5];
+		[unroll] for (int y = 0; y < 5; y++) {
+			float px[5];
+			[unroll] for (int x = 0; x < 5; x++) {
+				px[x] = sShadow.SampleLevel(smpsShadow, coord, 0, int2(x, y)).x < shadowRef ? 0.0 : 1.0;
+			}
+			float px01 = px[0] * weights.x + px[1];
+			float px34 = px[4] * weights.z + px[3];
+			row[y] = px01 + px[2] + px34;
+		}
+		float row01 = row[0] * weights.y + row[1];
+		float row34 = row[4] * weights.w + row[3];
+		shadow = (row01 + row[2] + row34) * (1.0 / 16.0);
+	}
+#else // SHADOW_IMPLEMENTATION_GATHER
+	// To add to the above, we can use gather instructions to get everything in 9 samples!
+	// Annoyingly, the way the results are returned makes the nice loop above not so nice looking.
+	// Use this chart for reference with variable names
+	// A B C D E
+	// F G H I J                                                    W Z
+	// K L M N O   (Reminder: Gather gathers in this goofy pattern: X Y)
+	// P Q R S T
+	// U V W X Y
+	{
+		float2 scaled = shadowBase * scSM.zw;
+		float2 offset = frac(scaled - 0.5);
+		float2 coord = shadowBase - (offset - 0.5) * scSM.xy; // Gather wants a pixel corner, not a pixel center, so offset the offset
+		float4 weights = float4(1 - offset, offset); // Weight for left, top, right, bottom edges
+		float4 fgba = sShadow.Gather(smpsShadow, coord, int2(0, 0))    < shadowRef ? 0.0 : 1.0;
+		float4 hidc = sShadow.Gather(smpsShadow, coord, int2(2, 0))    < shadowRef ? 0.0 : 1.0;
+		float2 je   = sShadow.Gather(smpsShadow, coord, int2(3, 0)).yz < shadowRef ? 0.0 : 1.0;
+		float4 pqlk = sShadow.Gather(smpsShadow, coord, int2(0, 2))    < shadowRef ? 0.0 : 1.0;
+		float4 rsnm = sShadow.Gather(smpsShadow, coord, int2(2, 2))    < shadowRef ? 0.0 : 1.0;
+		float2 to   = sShadow.Gather(smpsShadow, coord, int2(3, 2)).yz < shadowRef ? 0.0 : 1.0;
+		float2 uv   = sShadow.Gather(smpsShadow, coord, int2(0, 3)).xy < shadowRef ? 0.0 : 1.0;
+		float2 wx   = sShadow.Gather(smpsShadow, coord, int2(2, 3)).xy < shadowRef ? 0.0 : 1.0;
+		float  y    = sShadow.Gather(smpsShadow, coord, int2(3, 3)).y  < shadowRef ? 0.0 : 1.0;
+		float4 left  = float4(fgba.wx, pqlk.wx) * weights.x + float4(fgba.zy, pqlk.zy);
+		float leftB  = uv.x * weights.x + uv.y;
+		float4 mid   = float4(hidc.wx, rsnm.wx);
+		float midB   = wx.x;
+		float4 right = float4(je.yx, to.yx) * weights.z + float4(hidc.zy, rsnm.zy);
+		float rightB = y * weights.z + wx.y;
+		float4 rows = left + mid + right;
+		float rowsB = leftB + midB + rightB;
+		float row01 = rows.x * weights.y + rows.y;
+		float row34 = rowsB * weights.w + rows.w;
+		shadow = (row01 + rows.z + row34) * (1.0 / 16.0);
+	}
+#endif
 
 #if ALPHA == 0
 

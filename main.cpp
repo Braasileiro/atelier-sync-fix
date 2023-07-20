@@ -70,7 +70,7 @@ D3D11Proc loadSystemD3D11() {
     const char* str = "[MSAA]\n"
                       "; Number of samples (1 = no MSAA)\n"
                       "NumSamples = 8\n"
-                      "; Whether to do SSAA on transparent objects like grass (expensive)\n"
+                      "; Whether to do SSAA on transparent objects like grass and tree leaves (somewhat expensive, but prevents them from shimmering when the camera moves)\n"
                       "ObjectSSAA = 0\n";
     HANDLE file = CreateFileA("atfix.ini", GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
     if (file != INVALID_HANDLE_VALUE) {
