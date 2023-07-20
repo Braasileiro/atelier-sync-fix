@@ -786,10 +786,10 @@ public:
     if (SUCCEEDED(pResource->QueryInterface(IID_PPV_ARGS(&tex)))) {
       D3D11_TEXTURE2D_DESC tdesc;
       tex->GetDesc(&tdesc);
-      if (tdesc.Format == DXGI_FORMAT_R16G16B16A16_UNORM && pDesc->Format == DXGI_FORMAT_B8G8R8A8_UNORM) {
+      if (tdesc.Format == DXGI_FORMAT_R16_UNORM && pDesc->Format == DXGI_FORMAT_B8G8R8A8_UNORM) {
         // Our modified shadow texture
         desc = *pDesc;
-        desc.Format = DXGI_FORMAT_R16G16B16A16_UNORM;
+        desc.Format = DXGI_FORMAT_R16_UNORM;
         pDesc = &desc;
       }
       tex->Release();
@@ -803,10 +803,10 @@ public:
     if (SUCCEEDED(pResource->QueryInterface(IID_PPV_ARGS(&tex)))) {
       D3D11_TEXTURE2D_DESC tdesc;
       tex->GetDesc(&tdesc);
-      if (tdesc.Format == DXGI_FORMAT_R16G16B16A16_UNORM && pDesc->Format == DXGI_FORMAT_B8G8R8A8_UNORM) {
+      if (tdesc.Format == DXGI_FORMAT_R16_UNORM && pDesc->Format == DXGI_FORMAT_B8G8R8A8_UNORM) {
         // Our modified shadow texture
         desc = *pDesc;
-        desc.Format = DXGI_FORMAT_R16G16B16A16_UNORM;
+        desc.Format = DXGI_FORMAT_R16_UNORM;
         pDesc = &desc;
       }
       tex->Release();
@@ -902,7 +902,7 @@ public:
       // Unless someone has a really weird display resolution, this is the shadow texture
       // Increase its bit depth to prevent glitchy shadows
       desc = *pDesc;
-      desc.Format = DXGI_FORMAT_R16G16B16A16_UNORM;
+      desc.Format = DXGI_FORMAT_R16_UNORM;
       pDesc = &desc;
     }
 
