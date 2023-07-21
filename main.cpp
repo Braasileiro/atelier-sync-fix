@@ -17,7 +17,7 @@
 namespace atfix {
 
 Log log("atfix.log");
-Config config { 8, 0 };
+Config config { 8 };
 
 /** Load system D3D11 DLL and return entry points */
 using PFN_D3D11CreateDevice = HRESULT (__stdcall *) (
@@ -71,7 +71,10 @@ D3D11Proc loadSystemD3D11() {
                       "; Number of samples (1 = no MSAA)\n"
                       "NumSamples = 8\n"
                       "; Whether to do SSAA on transparent objects like grass and tree leaves (somewhat expensive, but prevents them from shimmering when the camera moves)\n"
-                      "ObjectSSAA = 0\n";
+                      "ObjectSSAA = 0\n"
+                      "[Other]\n"
+                      "; Allow toggling shader enhancements by holding BACK / SELECT (will not toggle MSAA but will toggle most other things)\n"
+                      "EnhancementToggle = 0\n";
     HANDLE file = CreateFileA("atfix.ini", GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
     if (file != INVALID_HANDLE_VALUE) {
       WriteFile(file, str, strlen(str), nullptr, nullptr);
@@ -80,14 +83,17 @@ D3D11Proc loadSystemD3D11() {
   } else {
     char NumSamples[8];
     char ObjectSSAA[8];
+    char UseShaderToggle[8];
     bool ok = true;
     GetPrivateProfileStringA("MSAA", "NumSamples", "8", NumSamples, sizeof(NumSamples), ".\\atfix.ini");
-    GetPrivateProfileStringA("MSAA", "ObjectSSAA", "8", ObjectSSAA, sizeof(ObjectSSAA), ".\\atfix.ini");
+    GetPrivateProfileStringA("MSAA", "ObjectSSAA", "0", ObjectSSAA, sizeof(ObjectSSAA), ".\\atfix.ini");
+    GetPrivateProfileStringA("Other", "EnhancementToggle", "0", UseShaderToggle, sizeof(UseShaderToggle), ".\\atfix.ini");
     config.msaaSamples = atoi(NumSamples);
     config.ssaaTransparentObjects = atoi(ObjectSSAA);
+    config.allowShaderToggle = atoi(UseShaderToggle);
     if (config.msaaSamples < 1)
       config.msaaSamples = 1;
-    log("Loaded config, ", config.msaaSamples, " samples, ", config.ssaaTransparentObjects, " objectSSAA");
+    log("Loaded config, ", config.msaaSamples, " samples, ", config.ssaaTransparentObjects, " objectSSAA, ", config.allowShaderToggle, " enhancementToggle ");
   }
 
   d3d11Proc.D3D11CreateDevice = reinterpret_cast<PFN_D3D11CreateDevice>(

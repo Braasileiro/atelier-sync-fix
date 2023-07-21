@@ -1,7 +1,9 @@
+#include "impl.h"
+
+#include <xinput.h>
 #include <array>
 #include <cstring>
 
-#include "impl.h"
 #include "ShaderSampleRateConverter.h"
 #include "util.h"
 
@@ -14,6 +16,7 @@ static const GUID IID_StagingShadowResource = {0xe2728d91,0x9fdd,0x40d0,{0x87,0x
 static const GUID IID_MSAACandidate = {0xe2728d93,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 static const GUID IID_MSAATexture = {0xe2728d94,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 static const GUID IID_AlphaToCoverage = {0xe2728d95,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
+static const GUID IID_OriginalShader = {0xe2728d96,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 
 struct ATFIX_RESOURCE_INFO {
   D3D11_RESOURCE_DIMENSION Dim;
@@ -28,6 +31,23 @@ struct ATFIX_RESOURCE_INFO {
   uint32_t MiscFlags;
   uint32_t CPUFlags;
 };
+
+static decltype(XInputGetState)* loadXInput() {
+  static HMODULE mod = LoadLibraryA("Xinput1_3.dll");
+  if (!mod)
+    return nullptr;
+  return reinterpret_cast<decltype(XInputGetState)*>(GetProcAddress(mod, "XInputGetState"));
+}
+
+static bool shouldUseOldShaders() {
+  if (!config.allowShaderToggle)
+    return false;
+  static decltype(XInputGetState)* getState = loadXInput();
+  XINPUT_STATE state;
+  if (getState && SUCCEEDED(getState(0, &state)))
+    return state.Gamepad.wButtons & XINPUT_GAMEPAD_BACK;
+  return false;
+}
 
 static bool isPowerOfTwo(UINT value) {
   return (value & (value - 1)) == 0;
@@ -833,6 +853,13 @@ public:
         a2cShader->Release();
       }
     }
+    if (SUCCEEDED(res) && config.allowShaderToggle && (converted || pShaderBytecode != bytecode)) {
+      ID3D11PixelShader* original;
+      if (SUCCEEDED(dev->CreatePixelShader(pShaderBytecode, BytecodeLength, pClassLinkage, &original))) {
+        (*ppPixelShader)->SetPrivateDataInterface(IID_OriginalShader, original);
+        original->Release();
+      }
+    }
     if (converted)
       free(converted);
     return res;
@@ -1090,8 +1117,9 @@ public:
   void PSSetShader(ID3D11PixelShader* pPixelShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override {
     requestedPS = pPixelShader;
     ID3D11PixelShader* a2c = nullptr;
+    bool useOriginalShaders = shouldUseOldShaders();
     bool oldUseA2C = ShouldUseA2C();
-    if (pPixelShader) {
+    if (pPixelShader && !useOriginalShaders) {
       UINT size = sizeof(a2c);
       pPixelShader->GetPrivateData(IID_AlphaToCoverage, &size, &a2c);
     }
@@ -1105,9 +1133,17 @@ public:
         ctx->OMGetBlendState(nullptr, factor, &sampleMask);
         ctx->OMSetBlendState(newUseA2C ? GetAlphaToCoverageBlend() : requestedBlend, factor, sampleMask);
     }
+    ID3D11PixelShader* original = nullptr;
+    if (pPixelShader && useOriginalShaders) {
+      UINT size = sizeof(original);
+      if (SUCCEEDED(pPixelShader->GetPrivateData(IID_OriginalShader, &size, &original)))
+        pPixelShader = original;
+    }
     ctx->PSSetShader(pPixelShader, ppClassInstances, NumClassInstances);
     if (a2c)
       a2c->Release();
+    if (original)
+      original->Release();
   }
 
   void OMSetBlendState(ID3D11BlendState* pBlendState, const FLOAT BlendFactor[4], UINT SampleMask) override {
