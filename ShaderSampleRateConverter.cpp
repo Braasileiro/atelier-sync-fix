@@ -56,7 +56,7 @@ bool shouldUseSampleRate(const void* data, SIZE_T length) {
     {0xd74438d8, 0xa2667a70, 0x5c3cae10, 0x1944d91e}, // Semi-transparent background (e.g. background tree leaves)
   };
   for (const ShaderHash& hash : sampleRateShaders)
-    if (hash == header->hash)
+    if (config.ssaaCharacters && hash == header->hash)
       return true;
   if (config.ssaaTransparentObjects && header->hash == ShaderHash({ 0x0cd1b9e5, 0x22e7069e, 0x476455ff, 0x98bfd850 }))
       return true;

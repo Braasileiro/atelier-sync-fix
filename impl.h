@@ -13,6 +13,7 @@ ID3D11DeviceContext* hookContext(ID3D11DeviceContext* pContext);
 extern Log log;
 extern struct Config {
 	DWORD msaaSamples;
+	bool ssaaCharacters;
 	bool ssaaTransparentObjects;
 	bool ssaaAll;
 	bool allowShaderToggle;
