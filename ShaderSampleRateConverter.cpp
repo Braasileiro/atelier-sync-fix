@@ -49,6 +49,9 @@ bool shouldUseSampleRate(const void* data, SIZE_T length) {
     {0xb169a00d, 0xa921903c, 0x25c56cb2, 0x2a150784}, // Face Edges
     {0x80701da2, 0x06ff6fad, 0xcc743be0, 0xbcceaf98}, // Eyes
     {0x66f3f5e9, 0x6b52c044, 0x6a99bd8a, 0x133fe74a}, // Eyebrows
+    {0x352edfef, 0x8a7e1aa0, 0xb1e9c972, 0xd9f84b10}, // Accessories
+    {0x576b6302, 0xf209d2fa, 0x542b7c05, 0xb45b37af}, // Accessory Edges
+    {0x19cce3ab, 0x52dfbaf0, 0x302d710c, 0xd90bc983}, // Character Transparent
 //  {0x0cd1b9e5, 0x22e7069e, 0x476455ff, 0x98bfd850}, // Semi-transparent objects (e.g. grass) [expensive, gets used for a lot of non-transparent objects too]
     {0xd74438d8, 0xa2667a70, 0x5c3cae10, 0x1944d91e}, // Semi-transparent background (e.g. background tree leaves)
   };
