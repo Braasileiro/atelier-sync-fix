@@ -88,15 +88,23 @@ struct PSInput
 float4 main(float4 pos : SV_Position, PSInput input) : SV_TARGET{
 #if ALPHA != 0
 	float3 lit = sLit.Sample(smpsLit, input.litCoord.xy).xyz * input.litColor;
+	float aref = vATest;
+	// The game forgets to set a nonzero aref when fading objects in and out
+	// This results in bushes increasing in size when they fade out, since suddenly more of the bush is shown
+	// Hardcoding an aref at all times affects real transparent objects (like water) as well
+	// Assume that objects getting faded in and out have a < 1 alpha multiplier, while normal transparent objects get their alpha only from the texture
+	// (And hopefully the game never tries to fade water in or out...)
+	if (atColor.a < 1)
+		aref = 0.785;
 	float4 color = (1.0).xxxx;
 	if (nStageNum.x >= 0.5) {
 		color = sStage0.Sample(smpsStage0, input.litCoord.zw);
 	}
 #if ALPHA == 1
-	clip(color.a - vATest);
+	clip(color.a - aref);
 #elif ALPHA == 2
 	float pxAlpha = abs(ddx_fine(color.a)) + abs(ddy_fine(color.a));
-	float a2c = saturate((color.a - vATest) / pxAlpha + 0.5);
+	float a2c = saturate((color.a - aref) / pxAlpha + 0.5);
 	if (a2c == 0)
 		discard;
 #endif
