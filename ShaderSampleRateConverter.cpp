@@ -57,7 +57,7 @@ bool shouldUseSampleRate(const void* data, SIZE_T length) {
       return true;
   if (config.ssaaTransparentObjects && header->hash == ShaderHash({ 0x0cd1b9e5, 0x22e7069e, 0x476455ff, 0x98bfd850 }))
       return true;
-  return false;
+  return config.ssaaAll;
 }
 
 enum DXShaderOpcode {
@@ -92,6 +92,12 @@ void* convertShaderToSampleRate(const void* data, SIZE_T length) {
         DWORD insn = *insns;
         DWORD opcode = insn & 0xff;
         DWORD length = (insn >> 24) & 0x1f;
+        if (!length)
+          length = insns[1];
+        if (!length) {
+          free(out);
+          return nullptr;
+        }
         if (opcode == OP_DCL_INPUT_PS || opcode == OP_DCL_INPUT_PS_SIV) {
           DWORD interpolation = (insn >> 11) & 0xf;
           DWORD old = interpolation;

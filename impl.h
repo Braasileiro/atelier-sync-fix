@@ -14,6 +14,7 @@ extern Log log;
 extern struct Config {
 	DWORD msaaSamples;
 	bool ssaaTransparentObjects;
+	bool ssaaAll;
 	bool allowShaderToggle;
 } config;
 }
