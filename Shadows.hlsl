@@ -28,7 +28,7 @@ float4 main(float4 pos : SV_Position, PSInput input) : SV_TARGET
 	clip(color.w - sBias.w);
 #endif
 	float depth = input.t0.z / input.t0.w;
-	float depthVariance = abs(ddx_fine(depth)) + abs(ddy_fine(depth));
-	float bias = depthVariance * 0.5 + 0.0005;
+	float depthSlope = abs(ddx_fine(depth)) + abs(ddy_fine(depth));
+	float bias = depthSlope * 0.5 + 0.001;
 	return depth + bias;
 }
