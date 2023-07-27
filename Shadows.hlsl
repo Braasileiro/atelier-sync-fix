@@ -29,6 +29,6 @@ float4 main(float4 pos : SV_Position, PSInput input) : SV_TARGET
 #endif
 	float depth = input.t0.z / input.t0.w;
 	float depthSlope = abs(ddx_fine(depth)) + abs(ddy_fine(depth));
-	float bias = depthSlope * 0.5 + 0.001;
+	float bias = depthSlope * sBias.x + (sBias.y / 5.0);
 	return depth + bias;
 }
