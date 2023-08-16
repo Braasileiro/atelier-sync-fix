@@ -18,6 +18,19 @@ static const GUID IID_MSAATexture = {0xe2728d94,0x9fdd,0x40d0,{0x87,0xa8,0x09,0x
 static const GUID IID_AlphaToCoverage = {0xe2728d95,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 static const GUID IID_OriginalShader = {0xe2728d96,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 
+enum class MSAACandidateState : UINT {
+  None = 0,
+  Possible, // Created SRV, not shadow buffer
+  Probable, // Likely to be the main RV
+  Dirty,    // MSAA texture created, not yet resolved
+  Clean,    // MSAA texture created, has been resolved
+};
+// Static const versions that we can take pointers to
+static const MSAACandidateState MSAACandidateStatePossible = MSAACandidateState::Possible;
+static const MSAACandidateState MSAACandidateStateProbable = MSAACandidateState::Probable;
+static const MSAACandidateState MSAACandidateStateDirty = MSAACandidateState::Dirty;
+static const MSAACandidateState MSAACandidateStateClean = MSAACandidateState::Clean;
+
 struct ATFIX_RESOURCE_INFO {
   D3D11_RESOURCE_DIMENSION Dim;
   DXGI_FORMAT Format;
@@ -290,6 +303,7 @@ ID3D11DepthStencilView* getOrCreateMSAADSV(ID3D11Device* dev, ID3D11DepthStencil
     desc.Format = vdesc.Format;
     desc.SampleDesc.Count = config.msaaSamples;
     desc.SampleDesc.Quality = 0;
+    desc.BindFlags &= ~D3D11_BIND_SHADER_RESOURCE;
     while (desc.SampleDesc.Count > 1) {
       UINT quality = 0;
       if (SUCCEEDED(dev->CheckMultisampleQualityLevels(desc.Format, desc.SampleDesc.Count, &quality)) && quality > 0)
@@ -310,12 +324,17 @@ ID3D11DepthStencilView* getOrCreateMSAADSV(ID3D11Device* dev, ID3D11DepthStencil
 
 void resolveIfMSAA(ID3D11DeviceContext* ctx, ID3D11Resource* res) {
   if (ID3D11Resource* msaa = getMSAATexture(res)) {
-    ID3D11Texture2D* tex;
-    D3D11_TEXTURE2D_DESC desc;
-    msaa->QueryInterface(IID_PPV_ARGS(&tex));
-    tex->GetDesc(&desc);
-    tex->Release();
-    ctx->ResolveSubresource(res, 0, msaa, 0, desc.Format);
+    MSAACandidateState state = MSAACandidateState::None;
+    UINT size = sizeof(state);
+    if (SUCCEEDED(res->GetPrivateData(IID_MSAACandidate, &size, &state)) && state == MSAACandidateState::Dirty) {
+      ID3D11Texture2D* tex;
+      D3D11_TEXTURE2D_DESC desc;
+      msaa->QueryInterface(IID_PPV_ARGS(&tex));
+      tex->GetDesc(&desc);
+      tex->Release();
+      ctx->ResolveSubresource(res, 0, msaa, 0, desc.Format);
+      msaa->SetPrivateData(IID_MSAACandidate, sizeof(state), &MSAACandidateStateClean);
+    }
     msaa->Release();
   }
 }
@@ -837,6 +856,13 @@ public:
         desc.Format = DXGI_FORMAT_R16_UNORM;
         pDesc = &desc;
       }
+      if (config.msaaSamples && tdesc.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS && !(isPowerOfTwo(tdesc.Width) && !isPowerOfTwo(tdesc.Height))) {
+        // Not shadow texture
+        MSAACandidateState state = MSAACandidateState::None;
+        UINT size = sizeof(state);
+        if (FAILED(tex->GetPrivateData(IID_MSAACandidate, &size, &state)) || state == MSAACandidateState::None)
+          tex->SetPrivateData(IID_MSAACandidate, sizeof(state), &MSAACandidateStatePossible);
+      }
       tex->Release();
     }
     return dev->CreateRenderTargetView(pResource, pDesc, ppRTView);
@@ -967,6 +993,7 @@ public:
 
 class ContextWrapper final : public ID3D11DeviceContext {
   LONG refcnt;
+  UINT numIndexedDraws = 0;
   ID3D11DeviceContext* ctx;
   ID3D11BlendState* alphaToCoverageBlend = nullptr;
   ID3D11BlendState* requestedBlend = nullptr;
@@ -1027,10 +1054,8 @@ public:
 
   // ID3D11DeviceContext
   void VSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) override { ctx->VSSetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers); }
-  void PSSetShaderResources(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppShaderResourceViews) override { ctx->PSSetShaderResources(StartSlot, NumViews, ppShaderResourceViews); }
   void PSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) override { ctx->PSSetSamplers(StartSlot, NumSamplers, ppSamplers); }
   void VSSetShader(ID3D11VertexShader* pVertexShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override { ctx->VSSetShader(pVertexShader, ppClassInstances, NumClassInstances); }
-  void DrawIndexed(UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) override { ctx->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation); }
   void Draw(UINT VertexCount, UINT StartVertexLocation) override { ctx->Draw(VertexCount, StartVertexLocation); }
   HRESULT Map(ID3D11Resource* pResource, UINT Subresource, D3D11_MAP MapType, UINT MapFlags, D3D11_MAPPED_SUBRESOURCE* pMappedResource) override { return ctx->Map(pResource, Subresource, MapType, MapFlags, pMappedResource); }
   void Unmap(ID3D11Resource* pResource, UINT Subresource) override { ctx->Unmap(pResource, Subresource); }
@@ -1121,6 +1146,23 @@ public:
   D3D11_DEVICE_CONTEXT_TYPE GetType() override { return ctx->GetType(); }
   UINT GetContextFlags() override { return ctx->GetContextFlags(); }
   HRESULT FinishCommandList(BOOL RestoreDeferredContextState, ID3D11CommandList** ppCommandList) override { return ctx->FinishCommandList(RestoreDeferredContextState, ppCommandList); }
+
+  void DrawIndexed(UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) override {
+    numIndexedDraws++;
+    ctx->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation);
+  }
+
+  void PSSetShaderResources(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppShaderResourceViews) override {
+    for (UINT i = 0; i < NumViews; i++) {
+      if (ppShaderResourceViews[i]) {
+        ID3D11Resource* res = nullptr;
+        ppShaderResourceViews[i]->GetResource(&res);
+        resolveIfMSAA(ctx, res);
+        res->Release();
+      }
+    }
+    ctx->PSSetShaderResources(StartSlot, NumViews, ppShaderResourceViews);
+  }
 
   void PSSetShader(ID3D11PixelShader* pPixelShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override {
     requestedPS = pPixelShader;
@@ -1258,14 +1300,6 @@ public:
     ID3D11Resource* dstShadow = getShadowResource(pDstResource);
 
     resolveIfMSAA(ctx, pSrcResource);
-    UINT info;
-    UINT size = sizeof(info);
-    if (SUCCEEDED(pSrcResource->GetPrivateData(IID_MSAACandidate, &size, &info)) && info == 1) {
-      // Sophie always copies from its main render target to another one for postprocessing effects
-      // Detect that to enable MSAA on it
-      info = 2;
-      pSrcResource->SetPrivateData(IID_MSAACandidate, sizeof(info), &info);
-    }
 
     bool needsBaseCopy = true;
     bool needsShadowCopy = true;
@@ -1325,15 +1359,37 @@ public:
           ID3D11DepthStencilView*   pDSV) override {
     updateRtvShadowResources(ctx);
 
-    ID3D11Resource* base = nullptr;
+    // Sophie seems to only use indexed draws on the main RT, shadow texture, and a texture where they pre-blend ground tiles
+    // There's usually only 10-20 ground tile draws, so target 64 as a safe number to avoid the ground tile draws
+    if (config.msaaSamples > 1 && numIndexedDraws > 64) {
+      ID3D11DepthStencilView* dsv = nullptr;
+      ID3D11RenderTargetView* rtv = nullptr;
+      MSAACandidateState state = MSAACandidateState::None;
+      UINT size = sizeof(state);
+      ctx->OMGetRenderTargets(1, &rtv, &dsv);
+      if (rtv && dsv) {
+        ID3D11Resource* rtvtex = nullptr;
+        rtv->GetResource(&rtvtex);
+        if (SUCCEEDED(rtvtex->GetPrivateData(IID_MSAACandidate, &size, &state)) && state == MSAACandidateState::Possible) {
+          rtvtex->SetPrivateData(IID_MSAACandidate, sizeof(state), &MSAACandidateStateProbable);
+          log("Marking texture with ", std::dec, numIndexedDraws, " indexed draws as MSAA target");
+        }
+        rtvtex->Release();
+      }
+      if (dsv) dsv->Release();
+      if (rtv) rtv->Release();
+    }
+    numIndexedDraws = 0;
+
     ID3D11RenderTargetView* msaaTex = nullptr;
     ID3D11DepthStencilView* msaaDepth = nullptr;
 
     if (config.msaaSamples > 1 && ppRTVs && RTVCount == 1 && pDSV) {
+      ID3D11Resource* base = nullptr;
       ppRTVs[0]->GetResource(&base);
-      UINT info;
-      UINT size = sizeof(info);
-      if (SUCCEEDED(base->GetPrivateData(IID_MSAACandidate, &size, &info)) && info == 2) {
+      MSAACandidateState state = MSAACandidateState::None;
+      UINT size = sizeof(state);
+      if (SUCCEEDED(base->GetPrivateData(IID_MSAACandidate, &size, &state)) && state >= MSAACandidateState::Probable) {
         ID3D11Device* dev;
         ctx->GetDevice(&dev);
         msaaTex = getOrCreateMSAARTV(dev, ppRTVs[0]);
@@ -1341,22 +1397,14 @@ public:
         ppRTVs = &msaaTex;
         pDSV = msaaDepth;
         dev->Release();
+        // We're rendering to the texture so it's now dirty
+        base->SetPrivateData(IID_MSAACandidate, sizeof(state), &MSAACandidateStateDirty);
       }
+      base->Release();
     }
 
     ctx->OMSetRenderTargets(RTVCount, ppRTVs, pDSV);
 
-    if (base && pDSV && !msaaTex) {
-      UINT value = 1;
-      ID3D11Texture2D* tex;
-      D3D11_TEXTURE2D_DESC desc;
-      base->QueryInterface(IID_PPV_ARGS(&tex));
-      tex->GetDesc(&desc);
-      tex->Release();
-      base->SetPrivateData(IID_MSAACandidate, sizeof(value), &value);
-    }
-
-    if (base) base->Release();
     if (msaaTex) msaaTex->Release();
     if (msaaDepth) msaaDepth->Release();
   }
