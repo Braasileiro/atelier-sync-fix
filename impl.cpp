@@ -781,7 +781,6 @@ public:
   HRESULT STDMETHODCALLTYPE CreateClassLinkage(ID3D11ClassLinkage** ppLinkage) override { return dev->CreateClassLinkage(ppLinkage); }
   HRESULT STDMETHODCALLTYPE CreateBlendState(const D3D11_BLEND_DESC* pBlendStateDesc, ID3D11BlendState** ppBlendState) override { return dev->CreateBlendState(pBlendStateDesc, ppBlendState); }
   HRESULT STDMETHODCALLTYPE CreateDepthStencilState(const D3D11_DEPTH_STENCIL_DESC* pDepthStencilDesc, ID3D11DepthStencilState** ppDepthStencilState) override { return dev->CreateDepthStencilState(pDepthStencilDesc, ppDepthStencilState); }
-  HRESULT STDMETHODCALLTYPE CreateSamplerState(const D3D11_SAMPLER_DESC* pSamplerDesc, ID3D11SamplerState** ppSamplerState) override { return dev->CreateSamplerState(pSamplerDesc, ppSamplerState); }
   HRESULT STDMETHODCALLTYPE CreateQuery(const D3D11_QUERY_DESC* pQueryDesc, ID3D11Query** ppQuery) override { return dev->CreateQuery(pQueryDesc, ppQuery); }
   HRESULT STDMETHODCALLTYPE CreatePredicate(const D3D11_QUERY_DESC* pPredicateDesc, ID3D11Predicate** ppPredicate) override { return dev->CreatePredicate(pPredicateDesc, ppPredicate); }
   HRESULT STDMETHODCALLTYPE CreateCounter(const D3D11_COUNTER_DESC* pCounterDesc, ID3D11Counter** ppCounter) override { return dev->CreateCounter(pCounterDesc, ppCounter); }
@@ -799,6 +798,15 @@ public:
   HRESULT STDMETHODCALLTYPE GetDeviceRemovedReason(void) override { return dev->GetDeviceRemovedReason(); }
   HRESULT STDMETHODCALLTYPE SetExceptionMode(UINT RaiseFlags) override { return dev->SetExceptionMode(RaiseFlags); }
   UINT STDMETHODCALLTYPE GetExceptionMode(void) override { return dev->GetExceptionMode(); }
+
+  HRESULT STDMETHODCALLTYPE CreateSamplerState(const D3D11_SAMPLER_DESC* pSamplerDesc, ID3D11SamplerState** ppSamplerState) override {
+    D3D11_SAMPLER_DESC desc = *pSamplerDesc;
+    if (config.anisotropy && desc.Filter == D3D11_FILTER_MIN_MAG_MIP_LINEAR) {
+      desc.Filter = D3D11_FILTER_ANISOTROPIC;
+      desc.MaxAnisotropy = config.anisotropy;
+    }
+    return dev->CreateSamplerState(&desc, ppSamplerState);
+  }
 
   HRESULT STDMETHODCALLTYPE CreateShaderResourceView(ID3D11Resource* pResource, const D3D11_SHADER_RESOURCE_VIEW_DESC* pDesc, ID3D11ShaderResourceView** ppSRView) override {
     ID3D11Texture2D* tex = nullptr;

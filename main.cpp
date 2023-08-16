@@ -17,7 +17,7 @@
 namespace atfix {
 
 Log log("atfix.log");
-Config config { 8, true };
+Config config { 8, 0, true };
 
 /** Load system D3D11 DLL and return entry points */
 using PFN_D3D11CreateDevice = HRESULT (__stdcall *) (
@@ -77,6 +77,8 @@ D3D11Proc loadSystemD3D11() {
                       "; Apply SSAA to everything, because you have more GPU power than you know what to do with\n"
                       "FullSSAA = 0\n"
                       "[Other]\n"
+                      "; Set to 1-16 to enable anisotropic filtering\n"
+                      "AF = 0\n"
                       "; Allow toggling shader enhancements by holding BACK / SELECT (will not toggle MSAA but will toggle most other things)\n"
                       "EnhancementToggle = 0\n";
     HANDLE file = CreateFileA("atfix.ini", GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
@@ -89,21 +91,24 @@ D3D11Proc loadSystemD3D11() {
     char CharacterSSAA[8];
     char ObjectSSAA[8];
     char FullSSAA[8];
+    char AF[8];
     char UseShaderToggle[8];
     bool ok = true;
     GetPrivateProfileStringA("MSAA", "NumSamples", "8", NumSamples, sizeof(NumSamples), ".\\atfix.ini");
     GetPrivateProfileStringA("MSAA", "CharacterSSAA", "1", CharacterSSAA, sizeof(CharacterSSAA), ".\\atfix.ini");
     GetPrivateProfileStringA("MSAA", "ObjectSSAA", "0", ObjectSSAA, sizeof(ObjectSSAA), ".\\atfix.ini");
     GetPrivateProfileStringA("MSAA", "FullSSAA", "0", FullSSAA, sizeof(FullSSAA), ".\\atfix.ini");
+    GetPrivateProfileStringA("Other", "AF", "0", AF, sizeof(AF), ".\\atfix.ini");
     GetPrivateProfileStringA("Other", "EnhancementToggle", "0", UseShaderToggle, sizeof(UseShaderToggle), ".\\atfix.ini");
     config.msaaSamples = atoi(NumSamples);
     config.ssaaCharacters = atoi(CharacterSSAA);
     config.ssaaTransparentObjects = atoi(ObjectSSAA);
     config.ssaaAll = atoi(FullSSAA);
+    config.anisotropy = atoi(AF);
     config.allowShaderToggle = atoi(UseShaderToggle);
     if (config.msaaSamples < 1)
       config.msaaSamples = 1;
-    log("Loaded config, ", config.msaaSamples, " samples, ", config.ssaaCharacters, " characterSSAA, ", config.ssaaTransparentObjects, " objectSSAA, ", config.ssaaAll, " fullSSAA, ", config.allowShaderToggle, " enhancementToggle ");
+    log("Loaded config, ", config.msaaSamples, " samples, ", config.ssaaCharacters, " characterSSAA, ", config.ssaaTransparentObjects, " objectSSAA, ", config.ssaaAll, " fullSSAA, ", config.anisotropy, " AF, ", config.allowShaderToggle, " enhancementToggle ");
   }
 
   d3d11Proc.D3D11CreateDevice = reinterpret_cast<PFN_D3D11CreateDevice>(
