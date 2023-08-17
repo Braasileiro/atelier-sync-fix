@@ -754,6 +754,10 @@ public:
       return S_OK;
     }
     HRESULT res = dev->QueryInterface(riid, ppvObject);
+    static const GUID IID_ID3D12Device = { 0x189819F1, 0x1DB6, 0x4B57, {0xBE, 0x54, 0x18, 0x21, 0x33, 0x9B, 0x85, 0xF7} };
+    if (IsEqualGUID(riid, IID_ID3D12Device))
+      return res;
+
     LPOLESTR iidstr;
     if (StringFromIID(riid, &iidstr) == S_OK) {
       char buf[64] = {};
