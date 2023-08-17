@@ -1002,6 +1002,7 @@ class ContextWrapper final : public ID3D11DeviceContext {
   ID3D11BlendState* alphaToCoverageBlend = nullptr;
   ID3D11BlendState* requestedBlend = nullptr;
   ID3D11PixelShader* requestedPS = nullptr;
+  D3D11_MAPPED_SUBRESOURCE lastMap;
   bool blendStateSupportsA2C = false;
   bool psSupportsA2C = false;
 
@@ -1061,8 +1062,6 @@ public:
   void PSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) override { ctx->PSSetSamplers(StartSlot, NumSamplers, ppSamplers); }
   void VSSetShader(ID3D11VertexShader* pVertexShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override { ctx->VSSetShader(pVertexShader, ppClassInstances, NumClassInstances); }
   void Draw(UINT VertexCount, UINT StartVertexLocation) override { ctx->Draw(VertexCount, StartVertexLocation); }
-  HRESULT Map(ID3D11Resource* pResource, UINT Subresource, D3D11_MAP MapType, UINT MapFlags, D3D11_MAPPED_SUBRESOURCE* pMappedResource) override { return ctx->Map(pResource, Subresource, MapType, MapFlags, pMappedResource); }
-  void Unmap(ID3D11Resource* pResource, UINT Subresource) override { ctx->Unmap(pResource, Subresource); }
   void PSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) override { ctx->PSSetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers); }
   void IASetInputLayout(ID3D11InputLayout* pInputLayout) override { ctx->IASetInputLayout(pInputLayout); }
   void IASetVertexBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppVertexBuffers, const UINT* pStrides, const UINT* pOffsets) override { ctx->IASetVertexBuffers(StartSlot, NumBuffers, ppVertexBuffers, pStrides, pOffsets); }
@@ -1150,6 +1149,41 @@ public:
   D3D11_DEVICE_CONTEXT_TYPE GetType() override { return ctx->GetType(); }
   UINT GetContextFlags() override { return ctx->GetContextFlags(); }
   HRESULT FinishCommandList(BOOL RestoreDeferredContextState, ID3D11CommandList** ppCommandList) override { return ctx->FinishCommandList(RestoreDeferredContextState, ppCommandList); }
+
+  HRESULT Map(ID3D11Resource* pResource, UINT Subresource, D3D11_MAP MapType, UINT MapFlags, D3D11_MAPPED_SUBRESOURCE* pMappedResource) override {
+    if (ID3D11Resource* shadow = getShadowResource(pResource)) {
+      HRESULT res = ctx->Map(shadow, Subresource, D3D11_MAP_READ_WRITE, 0, pMappedResource);
+      if (SUCCEEDED(res))
+        lastMap = *pMappedResource;
+      shadow->Release();
+      return res;
+    }
+    return ctx->Map(pResource, Subresource, MapType, MapFlags, pMappedResource);
+  }
+
+  void Unmap(ID3D11Resource* pResource, UINT Subresource) override {
+    if (ID3D11Resource* shadow = getShadowResource(pResource)) {
+      D3D11_MAPPED_SUBRESOURCE map;
+      HRESULT res = ctx->Map(pResource, Subresource, D3D11_MAP_WRITE_DISCARD, 0, &map);
+      if (SUCCEEDED(res)) {
+        ATFIX_RESOURCE_INFO info = {};
+        getResourceInfo(pResource, &info);
+        BYTE* dst = static_cast<BYTE*>(map.pData);
+        const BYTE* src = static_cast<const BYTE*>(lastMap.pData);
+        uint32_t dstPitch = map.RowPitch;
+        uint32_t srcPitch = lastMap.RowPitch;
+        uint32_t pxWide = info.Width * getFormatPixelSize(info.Format);
+        for (uint32_t y = 0; y < info.Height; y++) {
+          std::memcpy(dst, src, pxWide);
+          dst += dstPitch;
+          src += srcPitch;
+        }
+      }
+      ctx->Unmap(shadow, Subresource);
+      shadow->Release();
+    }
+    ctx->Unmap(pResource, Subresource);
+  }
 
   void DrawIndexed(UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) override {
     numIndexedDraws++;
