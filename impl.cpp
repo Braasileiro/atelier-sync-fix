@@ -874,8 +874,8 @@ public:
         // Not shadow texture
         MSAACandidateState state = MSAACandidateState::None;
         UINT size = sizeof(state);
-        if (FAILED(tex->GetPrivateData(IID_MSAACandidate, &size, &state)) || state == MSAACandidateState::None)
-          tex->SetPrivateData(IID_MSAACandidate, sizeof(state), &MSAACandidateStatePossible);
+        if (FAILED(pResource->GetPrivateData(IID_MSAACandidate, &size, &state)) || state == MSAACandidateState::None)
+          pResource->SetPrivateData(IID_MSAACandidate, sizeof(state), &MSAACandidateStatePossible);
       }
       tex->Release();
     }
@@ -1175,11 +1175,37 @@ public:
   D3D11_DEVICE_CONTEXT_TYPE GetType() override { return ctx->GetType(); }
   UINT GetContextFlags() override { return ctx->GetContextFlags(); }
 
+  void UpdateRenderTargetMSAAStatus() {
+    // Sophie seems to only use indexed draws on the main RT, shadow texture, and a texture where they pre-blend ground tiles
+    // There's usually only 10-20 ground tile draws, so target 64 as a safe number to avoid the ground tile draws
+    if (config.msaaSamples > 1 && numIndexedDraws > 64) {
+      ID3D11DepthStencilView* dsv = nullptr;
+      ID3D11RenderTargetView* rtv = nullptr;
+      MSAACandidateState state = MSAACandidateState::None;
+      UINT size = sizeof(state);
+      ctx->OMGetRenderTargets(1, &rtv, &dsv);
+      if (rtv && dsv) {
+        ID3D11Resource* rtvtex = nullptr;
+        rtv->GetResource(&rtvtex);
+        if (SUCCEEDED(rtvtex->GetPrivateData(IID_MSAACandidate, &size, &state)) && state == MSAACandidateState::Possible) {
+          rtvtex->SetPrivateData(IID_MSAACandidate, sizeof(state), &MSAACandidateStateProbable);
+          log("Marking texture with ", std::dec, numIndexedDraws, " indexed draws as MSAA target");
+        }
+        rtvtex->Release();
+      }
+
+      if (dsv) dsv->Release();
+      if (rtv) rtv->Release();
+    }
+    numIndexedDraws = 0;
+  }
+
   HRESULT FinishCommandList(BOOL RestoreDeferredContextState, ID3D11CommandList** ppCommandList) override {
     if (needsResolve) {
       resolveIfMSAA(ctx, needsResolve);
       needsResolve = nullptr;
     }
+    UpdateRenderTargetMSAAStatus();
     return ctx->FinishCommandList(RestoreDeferredContextState, ppCommandList);
   }
 
@@ -1523,27 +1549,7 @@ public:
     updateRtvShadowResources(ctx);
     rtsizeDirty = true;
 
-    // Sophie seems to only use indexed draws on the main RT, shadow texture, and a texture where they pre-blend ground tiles
-    // There's usually only 10-20 ground tile draws, so target 64 as a safe number to avoid the ground tile draws
-    if (config.msaaSamples > 1 && numIndexedDraws > 64) {
-      ID3D11DepthStencilView* dsv = nullptr;
-      ID3D11RenderTargetView* rtv = nullptr;
-      MSAACandidateState state = MSAACandidateState::None;
-      UINT size = sizeof(state);
-      ctx->OMGetRenderTargets(1, &rtv, &dsv);
-      if (rtv && dsv) {
-        ID3D11Resource* rtvtex = nullptr;
-        rtv->GetResource(&rtvtex);
-        if (SUCCEEDED(rtvtex->GetPrivateData(IID_MSAACandidate, &size, &state)) && state == MSAACandidateState::Possible) {
-          rtvtex->SetPrivateData(IID_MSAACandidate, sizeof(state), &MSAACandidateStateProbable);
-          log("Marking texture with ", std::dec, numIndexedDraws, " indexed draws as MSAA target");
-        }
-        rtvtex->Release();
-      }
-      if (dsv) dsv->Release();
-      if (rtv) rtv->Release();
-    }
-    numIndexedDraws = 0;
+    UpdateRenderTargetMSAAStatus();
 
     ID3D11RenderTargetView* msaaTex = nullptr;
     ID3D11DepthStencilView* msaaDepth = nullptr;
