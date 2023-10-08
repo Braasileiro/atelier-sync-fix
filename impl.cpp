@@ -870,7 +870,7 @@ public:
         desc.Format = DXGI_FORMAT_R16_UNORM;
         pDesc = &desc;
       }
-      if (config.msaaSamples && tdesc.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS && !(isPowerOfTwo(tdesc.Width) && !isPowerOfTwo(tdesc.Height))) {
+      if (config.msaaSamples && (tdesc.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS || tdesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM) && !(isPowerOfTwo(tdesc.Width) && !isPowerOfTwo(tdesc.Height))) {
         // Not shadow texture
         MSAACandidateState state = MSAACandidateState::None;
         UINT size = sizeof(state);
@@ -1030,6 +1030,7 @@ class ContextWrapper final : public ID3D11DeviceContext {
   LONG refcnt;
   UINT numIndexedDraws = 0;
   ID3D11DeviceContext* ctx;
+  ID3D11Resource* needsResolve;
   ID3D11BlendState* alphaToCoverageBlend = nullptr;
   ID3D11BlendState* requestedBlend = nullptr;
   ID3D11PixelShader* requestedPS = nullptr;
@@ -1173,7 +1174,14 @@ public:
   void Flush() override { ctx->Flush(); }
   D3D11_DEVICE_CONTEXT_TYPE GetType() override { return ctx->GetType(); }
   UINT GetContextFlags() override { return ctx->GetContextFlags(); }
-  HRESULT FinishCommandList(BOOL RestoreDeferredContextState, ID3D11CommandList** ppCommandList) override { return ctx->FinishCommandList(RestoreDeferredContextState, ppCommandList); }
+
+  HRESULT FinishCommandList(BOOL RestoreDeferredContextState, ID3D11CommandList** ppCommandList) override {
+    if (needsResolve) {
+      resolveIfMSAA(ctx, needsResolve);
+      needsResolve = nullptr;
+    }
+    return ctx->FinishCommandList(RestoreDeferredContextState, ppCommandList);
+  }
 
   void RSSetViewports(UINT NumViewports, const D3D11_VIEWPORT* pViewports) override
   {
@@ -1555,6 +1563,7 @@ public:
         dev->Release();
         // We're rendering to the texture so it's now dirty
         base->SetPrivateData(IID_MSAACandidate, sizeof(state), &MSAACandidateStateDirty);
+        needsResolve = base;
       }
       base->Release();
     }
