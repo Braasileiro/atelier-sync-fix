@@ -334,7 +334,7 @@ void resolveIfMSAA(ID3D11DeviceContext* ctx, ID3D11Resource* res) {
       tex->GetDesc(&desc);
       tex->Release();
       ctx->ResolveSubresource(res, 0, msaa, 0, desc.Format);
-      msaa->SetPrivateData(IID_MSAACandidate, sizeof(state), &MSAACandidateStateClean);
+      res->SetPrivateData(IID_MSAACandidate, sizeof(state), &MSAACandidateStateClean);
     }
     msaa->Release();
   }
