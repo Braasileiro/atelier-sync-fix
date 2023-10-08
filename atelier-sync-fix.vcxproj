@@ -57,6 +57,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
+      <AdditionalDependencies>DXGI.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ModuleDefinitionFile>d3d11.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>

@@ -17,6 +17,7 @@ static const GUID IID_MSAACandidate = {0xe2728d93,0x9fdd,0x40d0,{0x87,0xa8,0x09,
 static const GUID IID_MSAATexture = {0xe2728d94,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 static const GUID IID_AlphaToCoverage = {0xe2728d95,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 static const GUID IID_OriginalShader = {0xe2728d96,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
+static const GUID IID_DeviceWrapper = {0xe2728d97,0x9fdd,0x40d0,{0x87,0xa8,0x09,0xb6,0x2d,0xf3,0x14,0x9a}};
 
 enum class MSAACandidateState : UINT {
   None = 0,
@@ -740,6 +741,11 @@ public:
 
   // IUnknown
   HRESULT QueryInterface(REFIID riid, void** ppvObject) override {
+    if (IsEqualIID(riid, IID_DeviceWrapper)) {
+      AddRef();
+      *ppvObject = this;
+      return S_OK;
+    }
     if (IsEqualIID(riid, __uuidof(ID3D11Device))) {
       AddRef();
       *ppvObject = static_cast<ID3D11Device*>(this);
@@ -770,6 +776,8 @@ public:
     }
     return res;
   }
+
+  ID3D11Device* Dev() { return dev; }
 
   ULONG AddRef() override { return InterlockedAdd(&refcnt, 1); }
   ULONG Release() override {
@@ -1479,7 +1487,41 @@ public:
   }
 };
 
+typedef HRESULT (STDMETHODCALLTYPE*PFN_IDXGIFactory_CreateSwapChain)(IDXGIFactory* self, IUnknown* dev, DXGI_SWAP_CHAIN_DESC* desc, IDXGISwapChain** ppSwapChain);
+
+namespace originals {
+  static PFN_IDXGIFactory_CreateSwapChain IDXGIFactory_CreateSwapChain;
+}
+
+namespace replacements {
+  static HRESULT STDMETHODCALLTYPE IDXGIFactory_CreateSwapChain(IDXGIFactory* self, IUnknown* dev, DXGI_SWAP_CHAIN_DESC* desc, IDXGISwapChain** ppSwapChain)
+  {
+    DeviceWrapper* wrapper;
+    if (SUCCEEDED(dev->QueryInterface(IID_DeviceWrapper, reinterpret_cast<void**>(&wrapper)))) {
+      dev = wrapper->Dev();
+      wrapper->Release();
+    }
+    return originals::IDXGIFactory_CreateSwapChain(self, dev, desc, ppSwapChain);
+  }
+}
+
+void hookIDXGIDevice() {
+  IDXGIFactory* factory;
+  if (SUCCEEDED(CreateDXGIFactory(IID_PPV_ARGS(&factory)))) {
+    void** vtable = *reinterpret_cast<void***>(factory);
+    if (vtable[10] != replacements::IDXGIFactory_CreateSwapChain) {
+      DWORD prot;
+      VirtualProtect(&vtable[10], sizeof(void*), PAGE_READWRITE, &prot);
+      originals::IDXGIFactory_CreateSwapChain = reinterpret_cast<PFN_IDXGIFactory_CreateSwapChain>(vtable[10]);
+      vtable[10] = replacements::IDXGIFactory_CreateSwapChain;
+      VirtualProtect(&vtable[10], sizeof(void*), prot, &prot);
+    }
+    factory->Release();
+  }
+}
+
 ID3D11Device* hookDevice(ID3D11Device* pDevice) {
+  hookIDXGIDevice();
   log("Hooking device ", pDevice);
   return new DeviceWrapper(pDevice);
 }
