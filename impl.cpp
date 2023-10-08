@@ -733,6 +733,8 @@ class DeviceWrapper final : public ID3D11Device, IDXGIDevice1 {
   LONG refcnt;
   ID3D11Device* dev;
   IDXGIDevice1* dxgi;
+  UINT rtWidth = 0;
+  UINT rtHeight = 0;
 
 public:
   DeviceWrapper(ID3D11Device* dev_) : refcnt(1), dev(dev_), dxgi(nullptr) {
@@ -970,18 +972,39 @@ public:
           ID3D11Texture2D**         ppTexture) override {
     D3D11_TEXTURE2D_DESC desc;
 
-    if (pDesc && pDesc->Usage == D3D11_USAGE_STAGING) {
-      desc = *pDesc;
-      desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
-      pDesc = &desc;
-    }
+    if (pDesc)
+    {
+      if (pDesc->Usage == D3D11_USAGE_STAGING) {
+        desc = *pDesc;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+        pDesc = &desc;
+      }
 
-    if (pDesc && isPowerOfTwo(pDesc->Width) && isPowerOfTwo(pDesc->Height) && pDesc->Format == DXGI_FORMAT_B8G8R8A8_TYPELESS && (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET)) {
-      // Unless someone has a really weird display resolution, this is the shadow texture
-      // Increase its bit depth to prevent glitchy shadows
-      desc = *pDesc;
-      desc.Format = DXGI_FORMAT_R16_UNORM;
-      pDesc = &desc;
+      if (isPowerOfTwo(pDesc->Width) && isPowerOfTwo(pDesc->Height) && pDesc->Format == DXGI_FORMAT_B8G8R8A8_TYPELESS && (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET)) {
+        // Unless someone has a really weird display resolution, this is the shadow texture
+        // Increase its bit depth to prevent glitchy shadows
+        desc = *pDesc;
+        desc.Format = DXGI_FORMAT_R16_UNORM;
+        pDesc = &desc;
+      }
+      else if (pDesc->BindFlags & D3D11_BIND_DEPTH_STENCIL && rtWidth == 0)
+      {
+        // Game always creates the main render target first
+        // Take advantage of that to figure out its dimensions
+        rtWidth = pDesc->Width;
+        rtHeight = pDesc->Height;
+        log("Guessed main RT size: ", std::dec, rtWidth, "x", rtHeight);
+      }
+      else if (rtWidth && pDesc->BindFlags & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_DEPTH_STENCIL) && pDesc->Width == 1920 && pDesc->Height == 1080)
+      {
+        // Some older Atelier games (Rorona, Meruru, Ayesha) always render at 1080p no matter the requested resolution
+        // Resize that to the full RT size
+        log("Resizing 1920x1080 texture to ", std::dec, rtWidth, "x", rtHeight);
+        desc = *pDesc;
+        desc.Width = rtWidth;
+        desc.Height = rtHeight;
+        pDesc = &desc;
+      }
     }
 
     return dev->CreateTexture2D(pDesc, pData, ppTexture);
@@ -1011,8 +1034,10 @@ class ContextWrapper final : public ID3D11DeviceContext {
   ID3D11BlendState* requestedBlend = nullptr;
   ID3D11PixelShader* requestedPS = nullptr;
   D3D11_MAPPED_SUBRESOURCE lastMap;
+  UINT scissorWidth, scissorHeight, viewportWidth, viewportHeight;
   bool blendStateSupportsA2C = false;
   bool psSupportsA2C = false;
+  bool rtsizeDirty = false;
 
 public:
   ContextWrapper(ID3D11DeviceContext* ctx_) : refcnt(1), ctx(ctx_) {}
@@ -1069,13 +1094,10 @@ public:
   void VSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) override { ctx->VSSetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers); }
   void PSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) override { ctx->PSSetSamplers(StartSlot, NumSamplers, ppSamplers); }
   void VSSetShader(ID3D11VertexShader* pVertexShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override { ctx->VSSetShader(pVertexShader, ppClassInstances, NumClassInstances); }
-  void Draw(UINT VertexCount, UINT StartVertexLocation) override { ctx->Draw(VertexCount, StartVertexLocation); }
   void PSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) override { ctx->PSSetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers); }
   void IASetInputLayout(ID3D11InputLayout* pInputLayout) override { ctx->IASetInputLayout(pInputLayout); }
   void IASetVertexBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppVertexBuffers, const UINT* pStrides, const UINT* pOffsets) override { ctx->IASetVertexBuffers(StartSlot, NumBuffers, ppVertexBuffers, pStrides, pOffsets); }
   void IASetIndexBuffer(ID3D11Buffer* pIndexBuffer, DXGI_FORMAT Format, UINT Offset) override { ctx->IASetIndexBuffer(pIndexBuffer, Format, Offset); }
-  void DrawIndexedInstanced(UINT IndexCountPerInstance, UINT InstanceCount, UINT StartIndexLocation, INT BaseVertexLocation, UINT StartInstanceLocation) override { ctx->DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation); }
-  void DrawInstanced(UINT VertexCountPerInstance, UINT InstanceCount, UINT StartVertexLocation, UINT StartInstanceLocation) override { ctx->DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation); }
   void GSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) override { ctx->GSSetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers); }
   void GSSetShader(ID3D11GeometryShader* pShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override { ctx->GSSetShader(pShader, ppClassInstances, NumClassInstances); }
   void IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY Topology) override { ctx->IASetPrimitiveTopology(Topology); }
@@ -1089,12 +1111,7 @@ public:
   void GSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) override { ctx->GSSetSamplers(StartSlot, NumSamplers, ppSamplers); }
   void OMSetDepthStencilState(ID3D11DepthStencilState* pDepthStencilState, UINT StencilRef) override { ctx->OMSetDepthStencilState(pDepthStencilState, StencilRef); }
   void SOSetTargets(UINT NumBuffers, ID3D11Buffer* const* ppSOTargets, const UINT* pOffsets) override { ctx->SOSetTargets(NumBuffers, ppSOTargets, pOffsets); }
-  void DrawAuto() override { ctx->DrawAuto(); }
-  void DrawIndexedInstancedIndirect(ID3D11Buffer* pBufferForArgs, UINT AlignedByteOffsetForArgs) override { ctx->DrawIndexedInstancedIndirect(pBufferForArgs, AlignedByteOffsetForArgs); }
-  void DrawInstancedIndirect(ID3D11Buffer* pBufferForArgs, UINT AlignedByteOffsetForArgs) override { ctx->DrawInstancedIndirect(pBufferForArgs, AlignedByteOffsetForArgs); }
   void RSSetState(ID3D11RasterizerState* pRasterizerState) override { ctx->RSSetState(pRasterizerState); }
-  void RSSetViewports(UINT NumViewports, const D3D11_VIEWPORT* pViewports) override { ctx->RSSetViewports(NumViewports, pViewports); }
-  void RSSetScissorRects(UINT NumRects, const D3D11_RECT* pRects) override { ctx->RSSetScissorRects(NumRects, pRects); }
   void CopyStructureCount(ID3D11Buffer* pDstBuffer, UINT DstAlignedByteOffset, ID3D11UnorderedAccessView* pSrcView) override { ctx->CopyStructureCount(pDstBuffer, DstAlignedByteOffset, pSrcView); }
   void GenerateMips(ID3D11ShaderResourceView* pShaderResourceView) override { ctx->GenerateMips(pShaderResourceView); }
   void SetResourceMinLOD(ID3D11Resource* pResource, FLOAT MinLOD) override { ctx->SetResourceMinLOD(pResource, MinLOD); }
@@ -1158,6 +1175,26 @@ public:
   UINT GetContextFlags() override { return ctx->GetContextFlags(); }
   HRESULT FinishCommandList(BOOL RestoreDeferredContextState, ID3D11CommandList** ppCommandList) override { return ctx->FinishCommandList(RestoreDeferredContextState, ppCommandList); }
 
+  void RSSetViewports(UINT NumViewports, const D3D11_VIEWPORT* pViewports) override
+  {
+    rtsizeDirty = true;
+    if (NumViewports) {
+        viewportWidth = static_cast<UINT>(pViewports->Width);
+        viewportHeight = static_cast<UINT>(pViewports->Height);
+    }
+    ctx->RSSetViewports(NumViewports, pViewports);
+  }
+
+  void RSSetScissorRects(UINT NumRects, const D3D11_RECT* pRects) override
+  {
+    rtsizeDirty = true;
+    if (NumRects) {
+        scissorWidth = pRects->right;
+        scissorHeight = pRects->bottom;
+    }
+    ctx->RSSetScissorRects(NumRects, pRects);
+  }
+
   HRESULT Map(ID3D11Resource* pResource, UINT Subresource, D3D11_MAP MapType, UINT MapFlags, D3D11_MAPPED_SUBRESOURCE* pMappedResource) override {
     if (ID3D11Resource* shadow = getShadowResource(pResource)) {
       HRESULT res = ctx->Map(shadow, Subresource, D3D11_MAP_READ_WRITE, 0, pMappedResource);
@@ -1193,9 +1230,81 @@ public:
     ctx->Unmap(pResource, Subresource);
   }
 
+  void UpdateViewportScissor() {
+    rtsizeDirty = false;
+    UINT nviewports = 1;
+    UINT nscissor = 1;
+    D3D11_VIEWPORT vp;
+    D3D11_RECT scissor;
+    ctx->RSGetViewports(&nviewports, &vp);
+    ctx->RSGetScissorRects(&nscissor, &scissor);
+    if (nviewports != 1 || nscissor != 1)
+        return;
+    bool shouldOverride = scissor.top == 0 && scissor.left == 0 && scissorWidth == viewportWidth && scissorHeight == viewportHeight && scissorWidth == 1920 && scissorHeight == 1080;
+    vp.Width = static_cast<FLOAT>(viewportWidth);
+    vp.Height = static_cast<FLOAT>(viewportHeight);
+    scissor.right = scissorWidth;
+    scissor.bottom = scissorHeight;
+    if (shouldOverride) {
+        ID3D11RenderTargetView* rtv = nullptr;
+        ID3D11DepthStencilView* dsv = nullptr;
+        ID3D11Resource* rsrc = nullptr;
+        ID3D11Texture2D* tex;
+        ctx->OMGetRenderTargets(1, &rtv, &dsv);
+        if (rtv) {
+          rtv->GetResource(&rsrc);
+          rtv->Release();
+        }
+        if (dsv) {
+          if (!rsrc)
+            dsv->GetResource(&rsrc);
+          dsv->Release();
+        }
+        if (rsrc) {
+          if (SUCCEEDED(rsrc->QueryInterface(IID_PPV_ARGS(&tex)))) {
+            D3D11_TEXTURE2D_DESC desc;
+            tex->GetDesc(&desc);
+            vp.Width = static_cast<FLOAT>(desc.Width);
+            vp.Height = static_cast<FLOAT>(desc.Height);
+            scissor.right = desc.Width;
+            scissor.bottom = desc.Height;
+            tex->Release();
+          }
+          rsrc->Release();
+        }
+    }
+    ctx->RSSetViewports(1, &vp);
+    ctx->RSSetScissorRects(1, &scissor);
+  }
+
+  void Draw(UINT VertexCount, UINT StartVertexLocation) override {
+     if (rtsizeDirty) UpdateViewportScissor();
+     ctx->Draw(VertexCount, StartVertexLocation);
+  }
   void DrawIndexed(UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) override {
     numIndexedDraws++;
+    if (rtsizeDirty) UpdateViewportScissor();
     ctx->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation);
+  }
+  void DrawInstanced(UINT VertexCountPerInstance, UINT InstanceCount, UINT StartVertexLocation, UINT StartInstanceLocation) override {
+    if (rtsizeDirty) UpdateViewportScissor();
+    ctx->DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
+  }
+  void DrawIndexedInstanced(UINT IndexCountPerInstance, UINT InstanceCount, UINT StartIndexLocation, INT BaseVertexLocation, UINT StartInstanceLocation) override {
+    if (rtsizeDirty) UpdateViewportScissor();
+    ctx->DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
+  }
+  void DrawAuto() override {
+    if (rtsizeDirty) UpdateViewportScissor();
+    ctx->DrawAuto();
+  }
+  void DrawInstancedIndirect(ID3D11Buffer* pBufferForArgs, UINT AlignedByteOffsetForArgs) override {
+    if (rtsizeDirty) UpdateViewportScissor();
+    ctx->DrawInstancedIndirect(pBufferForArgs, AlignedByteOffsetForArgs);
+  }
+  void DrawIndexedInstancedIndirect(ID3D11Buffer* pBufferForArgs, UINT AlignedByteOffsetForArgs) override {
+    if (rtsizeDirty) UpdateViewportScissor();
+    ctx->DrawIndexedInstancedIndirect(pBufferForArgs, AlignedByteOffsetForArgs);
   }
 
   void PSSetShaderResources(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppShaderResourceViews) override {
@@ -1404,6 +1513,7 @@ public:
           ID3D11RenderTargetView* const* ppRTVs,
           ID3D11DepthStencilView*   pDSV) override {
     updateRtvShadowResources(ctx);
+    rtsizeDirty = true;
 
     // Sophie seems to only use indexed draws on the main RT, shadow texture, and a texture where they pre-blend ground tiles
     // There's usually only 10-20 ground tile draws, so target 64 as a safe number to avoid the ground tile draws
