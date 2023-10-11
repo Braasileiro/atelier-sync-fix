@@ -58,8 +58,6 @@ bool shouldUseSampleRate(const void* data, SIZE_T length) {
   for (const ShaderHash& hash : sampleRateShaders)
     if (config.ssaaCharacters && hash == header->hash)
       return true;
-  if (config.ssaaTransparentObjects && header->hash == ShaderHash({ 0x0cd1b9e5, 0x22e7069e, 0x476455ff, 0x98bfd850 }))
-      return true;
   return config.ssaaAll;
 }
 
@@ -136,7 +134,21 @@ Buffer getReplacementShader(const void* data, SIZE_T length) {
 }
 
 Buffer getAlphaToCoverageShader(const void* data, SIZE_T length) {
-  return findReplacement(data, length, shaderReplacementsAlphaToCoverage);
+  ShaderReplacementList list;
+  if (config.msaaSamples < 2) {
+      return {};
+  } else if (!config.sampleRateAlpha) {
+    list = shaderReplacementsAlphaToCoverage0;
+  } else if (config.msaaSamples > 8) {
+    list = shaderReplacementsAlphaToCoverage16;
+  } else if (config.msaaSamples > 4) {
+    list = shaderReplacementsAlphaToCoverage8;
+  } else if (config.msaaSamples > 2) {
+    list = shaderReplacementsAlphaToCoverage4;
+  } else {
+    list = shaderReplacementsAlphaToCoverage2;
+  }
+  return findReplacement(data, length, list);
 }
 
 } // namespace atfix

@@ -15,7 +15,7 @@ extern struct Config {
 	DWORD msaaSamples;
 	DWORD anisotropy;
 	bool ssaaCharacters;
-	bool ssaaTransparentObjects;
+	bool sampleRateAlpha;
 	bool ssaaAll;
 	bool allowShaderToggle;
 } config;

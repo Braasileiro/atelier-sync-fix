@@ -85,7 +85,13 @@ struct PSInput
 #endif
 };
 
-float4 main(float4 pos : SV_Position, PSInput input) : SV_TARGET{
+#if ALPHA == 2 && MSAA_SAMPLE_COUNT != 0
+	#define COVERAGE_OUT , out uint coverage : SV_Coverage
+#else
+	#define COVERAGE_OUT
+#endif
+
+float4 main(float4 pos : SV_Position, PSInput input COVERAGE_OUT) : SV_TARGET {
 #if ALPHA != 0
 	float3 lit = sLit.Sample(smpsLit, input.litCoord.xy).xyz * input.litColor;
 	float aref = vATest;
@@ -103,10 +109,28 @@ float4 main(float4 pos : SV_Position, PSInput input) : SV_TARGET{
 #if ALPHA == 1
 	clip(color.a - aref);
 #elif ALPHA == 2
+#if MSAA_SAMPLE_COUNT == 0
 	float pxAlpha = abs(ddx_fine(color.a)) + abs(ddy_fine(color.a));
 	float a2c = saturate((color.a - aref) / pxAlpha + 0.5);
 	if (a2c == 0)
 		discard;
+#else // MSAA_SAMPLE_COUNT == 0
+	if (ddx_coarse(color.a) != 0 || ddy_coarse(color.a) != 0) {
+		// In-shader AA
+		coverage = 0;
+		[unroll]
+		for (uint bit = 0; bit < MSAA_SAMPLE_COUNT; bit++) {
+			coverage |= (sStage0.Sample(smpsStage0, EvaluateAttributeAtSample(input.litCoord, bit).zw).a > aref) << bit;
+		}
+#if MSAA_SAMPLE_COUNT == 16
+		// 16 is the max we compile for
+		coverage |= coverage << 16;
+#endif
+	} else {
+		clip(color.a - aref);
+		coverage = ~0;
+	}
+#endif // MSAA_SAMPLE_COUNT == 0
 #endif
 #endif
 	float2 shadowBase = (input.shadow.xy / input.shadow.w);
@@ -237,11 +261,10 @@ float4 main(float4 pos : SV_Position, PSInput input) : SV_TARGET{
 	color.a *= input.litBase.a;
 	color.rgb = lerp(input.baseColor, lit * color.rgb, input.texColorWeight);
 	color = color * saturate(atColor) + saturate(atColor - 1);
-#if ALPHA == 1
+#if ALPHA == 1 || MSAA_SAMPLE_COUNT != 0
 	return float4(color.rgb * HdrRangeInv, color.a);
 #else
 	return float4(color.rgb * HdrRangeInv, a2c);
 #endif
-
 #endif
 }

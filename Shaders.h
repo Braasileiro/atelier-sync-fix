@@ -27,5 +27,9 @@ struct ShaderReplacementList {
 };
 
 extern const ShaderReplacementList shaderReplacements;
-extern const ShaderReplacementList shaderReplacementsAlphaToCoverage;
+extern const ShaderReplacementList shaderReplacementsAlphaToCoverage0;
+extern const ShaderReplacementList shaderReplacementsAlphaToCoverage2;
+extern const ShaderReplacementList shaderReplacementsAlphaToCoverage4;
+extern const ShaderReplacementList shaderReplacementsAlphaToCoverage8;
+extern const ShaderReplacementList shaderReplacementsAlphaToCoverage16;
 }

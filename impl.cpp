@@ -891,10 +891,14 @@ public:
       bytecode = buffer.data;
       length = buffer.length;
     }
-    if (config.msaaSamples > 1 && shouldUseSampleRate(pShaderBytecode, BytecodeLength))
+    if (config.msaaSamples > 1 && shouldUseSampleRate(pShaderBytecode, BytecodeLength)) {
       converted = convertShaderToSampleRate(bytecode, length);
+    } else if (config.msaaSamples > 1 && config.sampleRateAlpha && (buffer = getAlphaToCoverageShader(pShaderBytecode, BytecodeLength)).data) {
+      bytecode = buffer.data;
+      length = buffer.length;
+    }
     HRESULT res = dev->CreatePixelShader(converted ? converted : bytecode, length, pClassLinkage, ppPixelShader);
-    if (config.msaaSamples > 1 && !converted && SUCCEEDED(res) && (buffer = getAlphaToCoverageShader(pShaderBytecode, BytecodeLength)).data) {
+    if (config.msaaSamples > 1 && !config.sampleRateAlpha && !converted && SUCCEEDED(res) && (buffer = getAlphaToCoverageShader(pShaderBytecode, BytecodeLength)).data) {
       ID3D11PixelShader* a2cShader;
       if (SUCCEEDED(dev->CreatePixelShader(buffer.data, buffer.length, pClassLinkage, &a2cShader))) {
         (*ppPixelShader)->SetPrivateDataInterface(IID_AlphaToCoverage, a2cShader);

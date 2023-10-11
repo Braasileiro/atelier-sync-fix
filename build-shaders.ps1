@@ -5,7 +5,13 @@ $header += "namespace atfix {`n"
 Set-Content -NoNewline -Path Shaders.cpp $header
 
 $shaders = [System.Collections.ArrayList]@()
-$shadersA2C = [System.Collections.ArrayList]@()
+$shadersA2C = @{
+	0 = [System.Collections.ArrayList]@();
+	2 = [System.Collections.ArrayList]@();
+	4 = [System.Collections.ArrayList]@();
+	8 = [System.Collections.ArrayList]@();
+	16 = [System.Collections.ArrayList]@();
+}
 
 function Add-Shader {
 	[CmdletBinding()]
@@ -18,34 +24,38 @@ function Add-Shader {
 		[string[]]$FxcArgs
 	)
 	$hash = $HashString.Split("-") | % { [System.Convert]::ToUInt32($_, 16) }
-	$a2cstr = if ($AlphaToCoverage) { "_a2c" } else { "" }
-	$hashDecl = "0x{0:x8}, 0x{1:x8}, 0x{2:x8}, 0x{3:x8}" -f $hash[0], $hash[1], $hash[2], $hash[3]
-	$name = "shader${a2cstr}_{0:x8}_{1:x8}_{2:x8}_{3:x8}" -f $hash[0], $hash[1], $hash[2], $hash[3]
-	$decl = "{{$hashDecl}, $name, sizeof($name)}"
-	$path = "Shaders\$name.fxc"
+	$variants = if ($AlphaToCoverage) { 0, 2, 4, 8, 16 } else { 0 }
+	foreach ($variant in $variants) {
+		$a2cstr = if ($AlphaToCoverage) { "_a2c$variant" } else { "" }
+		$hashDecl = "0x{0:x8}, 0x{1:x8}, 0x{2:x8}, 0x{3:x8}" -f $hash[0], $hash[1], $hash[2], $hash[3]
+		$name = "shader${a2cstr}_{0:x8}_{1:x8}_{2:x8}_{3:x8}" -f $hash[0], $hash[1], $hash[2], $hash[3]
+		$decl = "{{$hashDecl}, $name, sizeof($name)}"
+		$path = "Shaders\$name.fxc"
+		$extra = if ($AlphaToCoverage) { "/DMSAA_SAMPLE_COUNT=$variant" } else { "" }
 
-	fxc /T ps_5_0 /Fo $path $FxcArgs $File
-	$content = [System.Io.File]::ReadAllBytes($path)
-	$array = "{"
+		fxc /T ps_5_0 /Fo $path $FxcArgs $extra $File
+		$content = [System.Io.File]::ReadAllBytes($path)
+		$array = "{"
 
-	for ($i = 0; $i -lt $content.Length; $i += 4) {
-		$num = [UInt32]$content[$i] -bor ([UInt32]$content[$i + 1] -shl 8) -bor ([UInt32]$content[$i + 2] -shl 16) -bor ([UInt32]$content[$i + 3] -shl 24)
-		if ($i % 32 -eq 0) {
-			$array += "`n  "
-		} else {
-			$array += " "
+		for ($i = 0; $i -lt $content.Length; $i += 4) {
+			$num = [UInt32]$content[$i] -bor ([UInt32]$content[$i + 1] -shl 8) -bor ([UInt32]$content[$i + 2] -shl 16) -bor ([UInt32]$content[$i + 3] -shl 24)
+			if ($i % 32 -eq 0) {
+				$array += "`n  "
+			} else {
+				$array += " "
+			}
+			$array += "0x{0:x8}," -f $num
 		}
-		$array += "0x{0:x8}," -f $num
-	}
 
-	$array += "`n};"
+		$array += "`n};"
 
-	Add-Content -NoNewline -Path Shaders.cpp "constexpr static DWORD $name[] = $array`n"
+		Add-Content -NoNewline -Path Shaders.cpp "constexpr static DWORD $name[] = $array`n"
 
-	if ($AlphaToCoverage) {
-		$shadersA2C.Add($decl)
-	} else {
-		$shaders.Add($decl)
+		if ($AlphaToCoverage) {
+			$shadersA2C[$variant].Add($decl)
+		} else {
+			$shaders.Add($decl)
+		}
 	}
 }
 
@@ -79,6 +89,10 @@ function Add-ShaderList($name, $array) {
 Add-Content -NoNewline -Path Shaders.cpp "`n`n"
 
 Add-ShaderList shaderReplacements $shaders
-Add-ShaderList shaderReplacementsAlphaToCoverage $shadersA2C
+Add-ShaderList shaderReplacementsAlphaToCoverage0 $shadersA2C[0]
+Add-ShaderList shaderReplacementsAlphaToCoverage2 $shadersA2C[2]
+Add-ShaderList shaderReplacementsAlphaToCoverage4 $shadersA2C[4]
+Add-ShaderList shaderReplacementsAlphaToCoverage8 $shadersA2C[8]
+Add-ShaderList shaderReplacementsAlphaToCoverage16 $shadersA2C[16]
 
 Add-Content -NoNewline -Path Shaders.cpp "} // namespace atfix`n"
