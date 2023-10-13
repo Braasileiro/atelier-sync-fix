@@ -10,6 +10,15 @@
 // 2 => Objects (Alpha to Coverage)
 #define ALPHA 0
 #endif
+#ifndef SHADOW
+#define SHADOW 1
+#endif
+
+#if SHADOW
+#define TEXADDR_SWIZZLE zw
+#else
+#define TEXADDR_SWIZZLE xy
+#endif
 
 //#define SHADOW_IMPLEMENTATION_GAME
 #define SHADOW_IMPLEMENTATION_GATHER
@@ -19,8 +28,10 @@ cbuffer Globals {
 	float nStageNum;
 	float vATest;
 #endif
+#if SHADOW
 	float4 scSM;
 	float4 scSM2;
+#endif
 #if ALPHA == 0
 	float4 texsize0;
 	float4 uvOffset0;
@@ -77,11 +88,17 @@ struct PSInput
 #endif
 #else
 	float4 litBase : TEXCOORD0;
+#if SHADOW
 	float4 shadow : TEXCOORD1;
 	float4 litCoord : TEXCOORD2;
 	float3 baseColor : TEXCOORD3;
 	float3 texColorWeight : TEXCOORD4;
 	float3 litColor : TEXCOORD5;
+#else // SHADOW
+	float3 baseColor : TEXCOORD1;
+	float3 texColorWeight : TEXCOORD2;
+	float2 litCoord : TEXCOORD3;
+#endif // SHADOW
 #endif
 };
 
@@ -93,7 +110,9 @@ struct PSInput
 
 float4 main(float4 pos : SV_Position, PSInput input COVERAGE_OUT) : SV_TARGET {
 #if ALPHA != 0
+#if SHADOW
 	float3 lit = sLit.Sample(smpsLit, input.litCoord.xy).xyz * input.litColor;
+#endif
 	float aref = vATest;
 	// The game forgets to set a nonzero aref when fading objects in and out
 	// This results in bushes increasing in size when they fade out, since suddenly more of the bush is shown
@@ -104,7 +123,7 @@ float4 main(float4 pos : SV_Position, PSInput input COVERAGE_OUT) : SV_TARGET {
 		aref = 0.785;
 	float4 color = (1.0).xxxx;
 	if (nStageNum.x >= 0.5) {
-		color = sStage0.Sample(smpsStage0, input.litCoord.zw);
+		color = sStage0.Sample(smpsStage0, input.litCoord.TEXADDR_SWIZZLE);
 	}
 #if ALPHA == 1
 	clip(color.a - aref);
@@ -120,7 +139,7 @@ float4 main(float4 pos : SV_Position, PSInput input COVERAGE_OUT) : SV_TARGET {
 		coverage = 0;
 		[unroll]
 		for (uint bit = 0; bit < MSAA_SAMPLE_COUNT; bit++) {
-			coverage |= (sStage0.Sample(smpsStage0, EvaluateAttributeAtSample(input.litCoord, bit).zw).a > aref) << bit;
+			coverage |= (sStage0.Sample(smpsStage0, EvaluateAttributeAtSample(input.litCoord, bit).TEXADDR_SWIZZLE).a > aref) << bit;
 		}
 #if MSAA_SAMPLE_COUNT == 16
 		// 16 is the max we compile for
@@ -133,6 +152,7 @@ float4 main(float4 pos : SV_Position, PSInput input COVERAGE_OUT) : SV_TARGET {
 #endif // MSAA_SAMPLE_COUNT == 0
 #endif
 #endif
+#if SHADOW
 	float2 shadowBase = (input.shadow.xy / input.shadow.w);
 	shadowBase += scSM2.xy; // -1.5px offset
 	float shadowRef = saturate(input.shadow.z / input.shadow.w);
@@ -220,6 +240,7 @@ float4 main(float4 pos : SV_Position, PSInput input COVERAGE_OUT) : SV_TARGET {
 		shadow = (row01 + rows.z + row34) * (1.0 / 16.0);
 	}
 #endif
+#endif // SHADOW
 
 #if ALPHA == 0
 
@@ -256,8 +277,12 @@ float4 main(float4 pos : SV_Position, PSInput input COVERAGE_OUT) : SV_TARGET {
 
 #else // ALPHA != 0
 
+#if SHADOW
 	shadow *= max((atColor.x - 0.7) * 3, 0);
 	lit = lit * shadow + input.litBase.xyz;
+#else
+	float3 lit = input.litBase.xyz;
+#endif
 	color.a *= input.litBase.a;
 	color.rgb = lerp(input.baseColor, lit * color.rgb, input.texColorWeight);
 	color = color * saturate(atColor) + saturate(atColor - 1);

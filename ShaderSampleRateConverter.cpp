@@ -53,7 +53,7 @@ bool shouldUseSampleRate(const void* data, SIZE_T length) {
     {0x576b6302, 0xf209d2fa, 0x542b7c05, 0xb45b37af}, // Accessory Edges
     {0x19cce3ab, 0x52dfbaf0, 0x302d710c, 0xd90bc983}, // Character Transparent
 //  {0x0cd1b9e5, 0x22e7069e, 0x476455ff, 0x98bfd850}, // Semi-transparent objects (e.g. grass) [expensive, gets used for a lot of non-transparent objects too]
-    {0xd74438d8, 0xa2667a70, 0x5c3cae10, 0x1944d91e}, // Semi-transparent background (e.g. background tree leaves)
+//  {0xd74438d8, 0xa2667a70, 0x5c3cae10, 0x1944d91e}, // Semi-transparent background (e.g. background tree leaves)
   };
   for (const ShaderHash& hash : sampleRateShaders)
     if (config.ssaaCharacters && hash == header->hash)

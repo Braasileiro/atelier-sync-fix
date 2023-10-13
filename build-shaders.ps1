@@ -72,6 +72,7 @@ Add-Shader -File Environment.hlsl -Hash "982709b2-2274a731-43455c36-104eb2a8" -F
 Add-Shader -File Environment.hlsl -Hash "d757bed5-09656d6f-43997a9c-c92777f9" -FxcArgs "/DBLEND=6"
 Add-Shader -File Environment.hlsl -Hash "0cd1b9e5-22e7069e-476455ff-98bfd850" -FxcArgs "/DALPHA=1"
 Add-Shader -File Environment.hlsl -Hash "0cd1b9e5-22e7069e-476455ff-98bfd850" -FxcArgs "/DALPHA=2" -AlphaToCoverage
+Add-Shader -File Environment.hlsl -Hash "d74438d8-a2667a70-5c3cae10-1944d91e" -FxcArgs "/DALPHA=2", "/DSHADOW=0" -AlphaToCoverage
 
 function Add-ShaderList($name, $array) {
 	$line = "constexpr static ShaderReplacement ${name}Data[] = {`n"
