@@ -79,6 +79,8 @@ D3D11Proc loadSystemD3D11() {
                       "[Other]\n"
                       "; Set to 1-16 to enable anisotropic filtering\n"
                       "AF = 0\n"
+                      "; Apply an additional bias to texture LODs (negative makes things less blurry and more shimmery, positive does the opposite)\n"
+                      "LODBias = 0\n"
                       "; Allow toggling shader enhancements by holding BACK / SELECT (will not toggle MSAA but will toggle most other things)\n"
                       "EnhancementToggle = 0\n";
     HANDLE file = CreateFileA("atfix.ini", GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
@@ -92,6 +94,7 @@ D3D11Proc loadSystemD3D11() {
     char SampleRateAlpha[8];
     char FullSSAA[8];
     char AF[8];
+    char LODBias[8];
     char UseShaderToggle[8];
     bool ok = true;
     GetPrivateProfileStringA("MSAA", "NumSamples", "8", NumSamples, sizeof(NumSamples), ".\\atfix.ini");
@@ -99,16 +102,18 @@ D3D11Proc loadSystemD3D11() {
     GetPrivateProfileStringA("MSAA", "AlphaSSAA", "1", SampleRateAlpha, sizeof(SampleRateAlpha), ".\\atfix.ini");
     GetPrivateProfileStringA("MSAA", "FullSSAA", "0", FullSSAA, sizeof(FullSSAA), ".\\atfix.ini");
     GetPrivateProfileStringA("Other", "AF", "0", AF, sizeof(AF), ".\\atfix.ini");
+    GetPrivateProfileStringA("Other", "LODBias", "0", LODBias, sizeof(LODBias), ".\\atfix.ini");
     GetPrivateProfileStringA("Other", "EnhancementToggle", "0", UseShaderToggle, sizeof(UseShaderToggle), ".\\atfix.ini");
     config.msaaSamples = atoi(NumSamples);
     config.ssaaCharacters = atoi(CharacterSSAA);
     config.sampleRateAlpha = atoi(SampleRateAlpha);
     config.ssaaAll = atoi(FullSSAA);
     config.anisotropy = atoi(AF);
+    config.lodBias = atof(LODBias);
     config.allowShaderToggle = atoi(UseShaderToggle);
     if (config.msaaSamples < 1)
       config.msaaSamples = 1;
-    log("Loaded config, ", config.msaaSamples, " samples, ", config.ssaaCharacters, " characterSSAA, ", config.sampleRateAlpha, " sampleRateAlpha, ", config.ssaaAll, " fullSSAA, ", config.anisotropy, " AF, ", config.allowShaderToggle, " enhancementToggle ");
+    log("Loaded config, ", config.msaaSamples, " samples, ", config.ssaaCharacters, " characterSSAA, ", config.sampleRateAlpha, " sampleRateAlpha, ", config.ssaaAll, " fullSSAA, ", config.anisotropy, " AF, ", config.lodBias, " lodBias, ", config.allowShaderToggle, " enhancementToggle ");
   }
 
   d3d11Proc.D3D11CreateDevice = reinterpret_cast<PFN_D3D11CreateDevice>(

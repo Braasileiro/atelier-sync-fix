@@ -14,6 +14,7 @@ extern Log log;
 extern struct Config {
 	DWORD msaaSamples;
 	DWORD anisotropy;
+	float lodBias;
 	bool ssaaCharacters;
 	bool sampleRateAlpha;
 	bool ssaaAll;

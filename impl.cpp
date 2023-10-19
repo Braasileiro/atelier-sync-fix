@@ -834,11 +834,28 @@ public:
 
   HRESULT STDMETHODCALLTYPE CreateSamplerState(const D3D11_SAMPLER_DESC* pSamplerDesc, ID3D11SamplerState** ppSamplerState) override {
     D3D11_SAMPLER_DESC desc = *pSamplerDesc;
+    bool modified = false;
     if (config.anisotropy && desc.Filter == D3D11_FILTER_MIN_MAG_MIP_LINEAR) {
       desc.Filter = D3D11_FILTER_ANISOTROPIC;
       desc.MaxAnisotropy = config.anisotropy;
+      modified = true;
     }
-    return dev->CreateSamplerState(&desc, ppSamplerState);
+    float bias;
+    if (config.lodBias < 0)
+        bias = std::max(config.lodBias, config.lodBias + desc.MipLODBias);
+    else
+        bias = std::min(config.lodBias, config.lodBias + desc.MipLODBias);
+    if (bias != desc.MipLODBias) {
+        desc.MipLODBias = bias;
+        modified = true;
+    }
+    HRESULT hr = dev->CreateSamplerState(&desc, ppSamplerState);
+    if (SUCCEEDED(hr)) {
+      ID3D11SamplerState* orig;
+      if (SUCCEEDED(dev->CreateSamplerState(pSamplerDesc, &orig)))
+        (*ppSamplerState)->SetPrivateDataInterface(IID_OriginalShader, orig);
+    }
+    return hr;
   }
 
   HRESULT STDMETHODCALLTYPE CreateShaderResourceView(ID3D11Resource* pResource, const D3D11_SHADER_RESOURCE_VIEW_DESC* pDesc, ID3D11ShaderResourceView** ppSRView) override {
@@ -1039,7 +1056,10 @@ class ContextWrapper final : public ID3D11DeviceContext {
   ID3D11BlendState* requestedBlend = nullptr;
   ID3D11PixelShader* requestedPS = nullptr;
   D3D11_MAPPED_SUBRESOURCE lastMap;
+  void* tmpMemory = nullptr;
+  UINT tmpMemorySize = 0;
   UINT scissorWidth, scissorHeight, viewportWidth, viewportHeight;
+  bool shouldUseOldShaders = false;
   bool blendStateSupportsA2C = false;
   bool psSupportsA2C = false;
   bool rtsizeDirty = false;
@@ -1097,7 +1117,6 @@ public:
 
   // ID3D11DeviceContext
   void VSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) override { ctx->VSSetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers); }
-  void PSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) override { ctx->PSSetSamplers(StartSlot, NumSamplers, ppSamplers); }
   void VSSetShader(ID3D11VertexShader* pVertexShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override { ctx->VSSetShader(pVertexShader, ppClassInstances, NumClassInstances); }
   void PSSetConstantBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppConstantBuffers) override { ctx->PSSetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers); }
   void IASetInputLayout(ID3D11InputLayout* pInputLayout) override { ctx->IASetInputLayout(pInputLayout); }
@@ -1345,6 +1364,31 @@ public:
     ctx->DrawIndexedInstancedIndirect(pBufferForArgs, AlignedByteOffsetForArgs);
   }
 
+  void PSSetSamplers(UINT StartSlot, UINT NumSamplers, ID3D11SamplerState* const* ppSamplers) override {
+    bool replacedSamplers = false;
+    if (shouldUseOldShaders) {
+      for (UINT i = 0; i < NumSamplers; i++) {
+        ID3D11SamplerState* orig;
+        UINT size = sizeof(orig);
+        if (SUCCEEDED(ppSamplers[i]->GetPrivateData(IID_OriginalShader, &size, &orig))) {
+          orig->Release(); // Still being held by sampler private data
+          if (!replacedSamplers) {
+            replacedSamplers = true;
+            SIZE_T size = sizeof(*ppSamplers) * NumSamplers;
+            if (tmpMemorySize < size) {
+              tmpMemory = realloc(tmpMemory, size);
+              tmpMemorySize = size;
+            }
+            memcpy(tmpMemory, ppSamplers, size);
+            ppSamplers = static_cast<ID3D11SamplerState**>(tmpMemory);
+          }
+          const_cast<ID3D11SamplerState**>(ppSamplers)[i] = orig;
+        }
+      }
+    }
+    ctx->PSSetSamplers(StartSlot, NumSamplers, ppSamplers);
+  }
+
   void PSSetShaderResources(UINT StartSlot, UINT NumViews, ID3D11ShaderResourceView* const* ppShaderResourceViews) override {
     for (UINT i = 0; i < NumViews; i++) {
       if (ppShaderResourceViews[i]) {
@@ -1360,7 +1404,7 @@ public:
   void PSSetShader(ID3D11PixelShader* pPixelShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances) override {
     requestedPS = pPixelShader;
     ID3D11PixelShader* a2c = nullptr;
-    bool useOriginalShaders = shouldUseOldShaders();
+    bool useOriginalShaders = shouldUseOldShaders;
     bool oldUseA2C = ShouldUseA2C();
     if (pPixelShader && !useOriginalShaders) {
       UINT size = sizeof(a2c);
@@ -1410,6 +1454,8 @@ public:
   }
 
   void ClearDepthStencilView(ID3D11DepthStencilView* pDepthStencilView, UINT ClearFlags, FLOAT Depth, UINT8 Stencil) override {
+    // Pick something that happens fairly infrequently to update this so we don't spam XInputGetState
+    shouldUseOldShaders = ::atfix::shouldUseOldShaders();
     if (ID3D11DepthStencilView* msaa = getMSAADSV(pDepthStencilView)) {
       ctx->ClearDepthStencilView(msaa, ClearFlags, Depth, Stencil);
       msaa->Release();
