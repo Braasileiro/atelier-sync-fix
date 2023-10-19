@@ -139,7 +139,7 @@ float4 main(float4 pos : SV_Position, PSInput input COVERAGE_OUT) : SV_TARGET {
 		coverage = 0;
 		[unroll]
 		for (uint bit = 0; bit < MSAA_SAMPLE_COUNT; bit++) {
-			coverage |= (sStage0.Sample(smpsStage0, EvaluateAttributeAtSample(input.litCoord, bit).TEXADDR_SWIZZLE).a > aref) << bit;
+			coverage |= (sStage0.SampleBias(smpsStage0, EvaluateAttributeAtSample(input.litCoord, bit).TEXADDR_SWIZZLE, MSAA_SAMPLE_COUNT > 4 ? -2 : -1).a > aref) << bit;
 		}
 #if MSAA_SAMPLE_COUNT == 16
 		// 16 is the max we compile for
