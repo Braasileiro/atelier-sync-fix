@@ -1,0 +1,30 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="impl.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="main.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="impl.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="log.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="util.h">
+      <Filter>include</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="include">
+      <UniqueIdentifier>{9ce0310e-3c27-47d0-b2dc-03c16ac1c08d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src">
+      <UniqueIdentifier>{ed8abbc5-7f98-4105-b090-f4af683b00bc}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
