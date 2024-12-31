@@ -597,16 +597,7 @@ public:
       return S_OK;
     }
     HRESULT res = dev->QueryInterface(riid, ppvObject);
-    LPOLESTR iidstr;
-    if (StringFromIID(riid, &iidstr) == S_OK) {
-      char buf[64] = {};
-      WideCharToMultiByte(CP_UTF8, 0, iidstr, -1, buf, sizeof(buf), nullptr, nullptr);
-      log("ID3D11Device QueryInterface ", buf, " => ", std::hex, res);
-      CoTaskMemFree(iidstr);
-    }
-    else {
-      log("ID3D11Device QueryInterface <failed to get iid str>");
-    }
+
     return res;
   }
 
@@ -752,15 +743,6 @@ public:
 
   // IUnknown
   HRESULT QueryInterface(REFIID riid, void** ppvObject) override {
-    LPOLESTR iidstr;
-    if (StringFromIID(riid, &iidstr) == S_OK) {
-      char buf[64] = {};
-      WideCharToMultiByte(CP_UTF8, 0, iidstr, -1, buf, sizeof(buf), nullptr, nullptr);
-      log("ID3D11DeviceContext QueryInterface ", buf);
-      CoTaskMemFree(iidstr);
-    } else {
-      log("ID3D11DeviceContext QueryInterface <failed to get iid str>");
-    }
     return ctx->QueryInterface(riid, ppvObject);
   }
   ULONG AddRef() override { return InterlockedAdd(&refcnt, 1); }
